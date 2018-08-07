@@ -1,7 +1,7 @@
 import bokeh.plotting as bp
 import numpy as np
 
-from bokeh.layouts import column, row, widgetbox
+from bokeh.layouts import column, row
 # from bokeh.layouts import widgetbox
 from bokeh.models import (
     ColumnDataSource,
@@ -64,9 +64,10 @@ def plot_image(image: np.ndarray):
         name='image_plot',
     )
 
-    # Add hover tool
+    # Create hover tool
     hover = HoverTool(tooltips=[('x', '$x'), ('y', '$y'), ('value', '@image')])
 
+    # Create ROI selection renderer
     r1 = plot.rect(
         x='x',
         y='y',
@@ -78,6 +79,8 @@ def plot_image(image: np.ndarray):
         dilate=True,
         name='rois',
     )
+
+    # Add tools
     plot.add_tools(
         hover,
         BoxSelectTool(),
@@ -90,6 +93,7 @@ def plot_image(image: np.ndarray):
 
 
 def create_data_table(dao: DataAccessObject):
+    # Basic data table to choose image
     columns = [
         TableColumn(field='images', title='Image'),
         TableColumn(field='shapes', title='Shape'),
@@ -103,9 +107,6 @@ def create_data_table(dao: DataAccessObject):
 
 
 def update_image_plot(attr, old, new):
-    # layout = curdoc().get_model_by_name('main_layout')
-    # image_figure = curdoc().get_model_by_name('image_figure')
-    # layout.children.remove(image_figure)
     selected_image = data_table.source.data['images'][
         data_table.source.selected.indices[0]]
     image = [image for image in dao.images if image.name == selected_image][0]
