@@ -1,46 +1,66 @@
 import bokeh.plotting as bp
+import json
 import numpy as np
 
+from bokeh.core.json_encoder import serialize_json
 from bokeh.layouts import column, row
-# from bokeh.layouts import widgetbox
 from bokeh.models import (
     ColumnDataSource,
     HoverTool,
-    BoxSelectTool,
     BoxEditTool,
-    LassoSelectTool,
-    PolySelectTool,
 )
-from bokeh.models.widgets import DataTable, TableColumn, Div
+from bokeh.models.widgets import DataTable, TableColumn
 from bokeh.io import curdoc
 from data_access.data_access_object import DataAccessObject
-# from data_access.data_object import DataObject
 
 dao = DataAccessObject()
 data = dict(
     images=[image.name for image in dao.images],
     shapes=[image.data.shape for image in dao.images],
 )
-data_source = ColumnDataSource(data)
-roi_source = ColumnDataSource(data=dict(
-    x=[],
-    y=[],
-    width=[],
-    height=[],
-))
-
-sources_dict = {
-    'data': data_source,
-    'selected_image': None,
-    'roi': roi_source,
-}
+data_source = ColumnDataSource(data=data)
 
 
-def plot_image(image: np.ndarray):
+def create_data_table(dao: DataAccessObject):
+    columns = [
+        TableColumn(field='images', title='Image'),
+        TableColumn(field='shapes', title='Shape'),
+    ]
+    return DataTable(
+        source=data_source,
+        columns=columns,
+        width=400,
+        height=800,
+    )
 
-    # Create data source
-    source = ColumnDataSource(data=dict(image=[image]))
-    sources_dict['selected_image'] = source
+
+data_table = create_data_table(dao)
+
+
+def get_selection_index():
+    return data_table.source.selected.indices[0]
+
+
+def get_selection_name():
+    selection_index = get_selection_index()
+    return data_table.source.data['images'][selection_index]
+
+
+def get_selection_image():
+    return dao.get_image(get_selection_name())
+
+
+data_source.selected.indices = [0]
+
+selected_image = get_selection_image()
+image_source = ColumnDataSource(data=dict(image=[selected_image.data]))
+
+roi_source = ColumnDataSource(data={})
+roi_source.data = dao.get_roi_source(selected_image)
+
+
+def create_image_figure(image: np.ndarray):
+    image = image_source.data['image'][0]
 
     # Create figure
     plot = bp.figure(
@@ -59,7 +79,7 @@ def plot_image(image: np.ndarray):
         y=0,
         dw=image.shape[1],
         dh=image.shape[0],
-        source=source,
+        source=image_source,
         palette='Spectral11',
         name='image_plot',
     )
@@ -73,54 +93,42 @@ def plot_image(image: np.ndarray):
         y='y',
         width='width',
         height='height',
-        source=sources_dict['roi'],
+        source=roi_source,
         fill_alpha=0.5,
         fill_color='#DAF7A6',
-        dilate=True,
+        # dilate=True,
         name='rois',
     )
 
     # Add tools
-    plot.add_tools(
+    plot.tools = [
         hover,
-        BoxSelectTool(),
         BoxEditTool(renderers=[r1]),
-        LassoSelectTool(),
-        PolySelectTool(),
-    )
+    ]
 
     return plot
 
 
-def create_data_table(dao: DataAccessObject):
-    # Basic data table to choose image
-    columns = [
-        TableColumn(field='images', title='Image'),
-        TableColumn(field='shapes', title='Shape'),
-    ]
-    return DataTable(
-        source=data_source,
-        columns=columns,
-        width=400,
-        height=800,
-    )
+plot = create_image_figure(selected_image.data)
 
 
 def update_image_plot(attr, old, new):
-    selected_image = data_table.source.data['images'][
-        data_table.source.selected.indices[0]]
-    image = [image for image in dao.images if image.name == selected_image][0]
-    sources_dict['selected_image'].data.update(image.get_data())
+    image = get_selection_image()
+    image_source.data['image'] = [image.get_data()]
+    roi_source.data = dao.get_roi_source(image)
+
+
+data_source.selected.on_change('indices', update_image_plot)
 
 
 def create_roi(attr, old, new):
-    print(sources_dict['roi'].data)
+    image = get_selection_image()
+    jsoned = json.loads(serialize_json(roi_source.data))
+    with open(image.rois_file_path, 'w') as roi_file:
+        json.dump(jsoned, roi_file)
 
 
-coord = Div(text='Coordinates:\n')
-sources_dict['data'].on_change('selected', update_image_plot)
-plot = plot_image(dao.images[0].get_data())
-sources_dict['roi'].on_change('selected', create_roi)
-data_table = create_data_table(dao)
-layout = row(column(data_table, coord), plot, name='main_layout')
+roi_source.on_change('data', create_roi)
+
+layout = row(column(data_table), plot, name='main_layout')
 curdoc().add_root(layout)

@@ -3,7 +3,7 @@ import os
 import PIL.Image
 
 
-class DataObject:
+class ImageFile:
     _path = None
 
     def __init__(self, path: str):
@@ -11,6 +11,8 @@ class DataObject:
         self.name = self.get_name()
         self.image = self.get_image()
         self.data = self.get_data()
+        self.rois_file_name = f'{self.name}.json'
+        self.rois_file_path = None
 
     def get_image(self):
         """
@@ -38,7 +40,7 @@ class DataObject:
         return np.array(self.image, dtype=float)
 
     def get_name(self) -> str:
-        return os.path.basename(self.path).split('.')[0]
+        return os.path.basename(self.path).split('.')[0]    
 
     @property
     def path(self):

@@ -1,5 +1,6 @@
 {
-    "python.pythonPath": "/home/flavus/.local/share/virtualenvs/flics-app-W-HdhFxn/bin/python",
+    // "python.pythonPath": "/home/flavus/.local/share/virtualenvs/flics-app-W-HdhFxn/bin/python",
+    "python.pythonPath": "/home/flavus/anaconda3/envs/bokeh/bin/python",
     "python.linting.pylintEnabled": false,
     "python.linting.flake8Enabled": true,
     "python.linting.flake8Path": "/home/flavus/.local/share/virtualenvs/flics-app-W-HdhFxn/bin/flake8",
