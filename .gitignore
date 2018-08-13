@@ -20,11 +20,9 @@ static/
 # Files
 *.tif
 *.json
-analysis/data/
+!analysis/.gitkeep
 !analysis/data/.gitkeep
-analysis/rois/
 !analysis/rois/.gitkeep
-analysis/results/
 !analysis/results/.gitkeep
 
 # Editor directories and files
