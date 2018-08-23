@@ -1,11 +1,12 @@
 import glob
-import json
+# import json
 import os
 
 from .image_file import ImageFile
 
 DEFAULT_PATH = os.path.abspath('./analysis')
-EMPTY_ROI_SOURCE = dict(x=[], y=[], width=[], height=[])
+
+# EMPTY_ROI_SOURCE = dict(x=[], y=[], width=[], height=[])
 
 
 class DataAccessObject:
@@ -33,8 +34,8 @@ class DataAccessObject:
         for image in self.images:
             image.rois_file_path = self.get_roi_file_path(image)
 
-    def get_image(self, name: str) -> ImageFile:
-        return next((image for image in self.images if image.name == name), None)
+    def get_image(self, index: int):
+        return self.images[index]
 
     def get_roi_source(self, image: ImageFile):
         file_path = image.rois_file_path

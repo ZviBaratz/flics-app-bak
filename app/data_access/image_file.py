@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import os
 import PIL.Image
@@ -40,7 +41,14 @@ class ImageFile:
         return np.array(self.image, dtype=float)
 
     def get_name(self) -> str:
-        return os.path.basename(self.path).split('.')[0]    
+        return os.path.basename(self.path).split('.')[0]
+
+    def get_roi_dict(self) -> dict:
+        if self.rois_file_path and os.path.isfile(self.rois_file_path):
+            with open(self.rois_file_path) as serialized_rois:
+                rois = json.load(serialized_rois)
+            return rois
+        return dict(x=[], y=[], width=[], height=[])
 
     @property
     def path(self):
