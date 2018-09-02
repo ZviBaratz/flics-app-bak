@@ -2,6 +2,7 @@ import json
 import numpy as np
 import os
 import PIL.Image
+import tifffile
 
 
 class ImageFile:
@@ -39,6 +40,45 @@ class ImageFile:
         :rtype: np.ndarray
         """
         return np.array(self.image, dtype=float)
+
+    def fix_raw_metadata(self, raw_metadata: dict) -> dict:
+        fixed_metadata = dict()
+        for key in raw_metadata:
+            if key == 'ImageJ':
+                fixed_metadata['image_j'] = raw_metadata[key]
+            elif key == 'Info':
+                for att in raw_metadata[key].split('\n'):
+                    try:
+                        att_name, att_value = att.split('=')
+                    except ValueError:
+                        pass
+                    try:
+                        att_value = float(att_value)
+                    except ValueError:
+                        att_value = att_value.strip()
+                    att_name = att_name.strip()
+                    if '|' in att_name:
+                        fields = att_name.split('|')
+                        if fields[0] not in fixed_metadata:
+                            fixed_metadata[fields[0]] = dict()
+                        if len(fields) is 2:
+                            fixed_metadata[fields[0]][fields[1]] = att_value
+                        elif len(fields) is 3:
+                            if fields[1] not in fixed_metadata[fields[0]]:
+                                print(fields)
+                                fixed_metadata[fields[0]][fields[1]] = dict()
+                            fixed_metadata[fields[0]][fields[1]][fields[
+                                2]] = att_value
+                    else:
+                        fixed_metadata[att_name] = att_value
+            else:
+                fixed_metadata[key] = raw_metadata[key]
+        return fixed_metadata
+
+    def get_metadata(self) -> dict:
+        with tifffile.TiffFile(self.path) as tif:
+            metadata = tif.imagej_metadata.copy()
+        return self.fix_raw_metadata(metadata)
 
     def get_name(self) -> str:
         return os.path.basename(self.path).split('.')[0]

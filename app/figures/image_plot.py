@@ -1,5 +1,5 @@
 from numpy import ndarray
-from bokeh.models import ColumnDataSource, HoverTool, BoxEditTool
+from bokeh.models import ColumnDataSource, HoverTool, BoxEditTool, PolyDrawTool, PolyEditTool
 from bokeh.plotting import Figure, figure
 
 
@@ -48,9 +48,29 @@ def create_image_figure(
         # dilate=True,
         name='rois',
     )
+
+    # vectors = ColumnDataSource(data={})
+
+    lines = plot.multi_line(
+        xs=[],
+        ys=[],
+        line_color='red',
+        line_width=2,
+        name='vectors',
+    )
+
+    circles = plot.circle(
+        [],
+        [],
+        size=10,
+        color='yellow',
+    )
+
     plot.tools = [
         hover,
         BoxEditTool(renderers=[r1]),
+        PolyDrawTool(renderers=[lines]),
+        PolyEditTool(renderers=[lines], vertex_renderer=circles),
     ]
 
     return plot

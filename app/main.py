@@ -191,3 +191,12 @@ main_layout = row(
     name='main_layout',
 )
 curdoc().add_root(main_layout)
+
+
+def handle_vector(attr, old, new):
+    print('\nCreated new vector!')
+    print(f'x: {new["xs"][-1]}, y: {new["ys"][-1]}')
+
+
+lines = curdoc().get_model_by_name('vectors')
+lines.data_source.on_change('data', handle_vector)
