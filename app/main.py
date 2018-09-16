@@ -10,6 +10,7 @@ from bokeh.models.widgets import (
     Select,
     Slider,
     TextInput,
+    Toggle,
 )
 from figures.image_plot import create_image_figure
 
@@ -46,7 +47,7 @@ def update_image_select(attr, old, new):
 
 base_dir_input.on_change('value', update_image_select)
 
-raw_source = ColumnDataSource(data=dict())
+raw_source = ColumnDataSource(data=dict(image=[]))
 
 image_select = Select(title='Image', value='---', options=['---'])
 
@@ -59,7 +60,7 @@ def get_full_path(relative_path: str) -> str:
         print('Failed to find appropriate image path')
 
 
-def read_image(path):
+def read_image_file(path: str) -> np.ndarray:
     with tifffile.TiffFile(path, movie=True) as f:
         try:
             data = f.asarray(slice(1, None, 2))  # read the second channel only
@@ -68,8 +69,12 @@ def read_image(path):
         return data
 
 
+def get_current_image() -> np.ndarray:
+    return raw_source.data['image'][0]
+
+
 def update_time_slider() -> None:
-    image = raw_source.data['image']
+    image = get_current_image()
     if len(image.shape) is 3:
         time_slider.end = image.shape[0] - 1
         time_slider.disabled = False
@@ -79,7 +84,7 @@ def update_time_slider() -> None:
 
 
 def get_current_frame() -> np.ndarray:
-    image = raw_source.data['image']
+    image = get_current_image()
     if len(image.shape) is 3:
         return image[time_slider.value, :, :]
     return image
@@ -97,20 +102,21 @@ def update_plot() -> None:
     update_plot_axes(width, height)
 
 
-def read_metadata(path):
+def read_metadata(path: str) -> dict:
     with tifffile.TiffFile(path, movie=True) as f:
         return f.scanimage_metadata
 
 
 def select_image(attr, old, new):
     path = get_full_path(new)
-    image = read_image(path)
-    raw_source.data['image'] = image
+    image = read_image_file(path)
+    raw_source.data['image'] = [image]
     update_time_slider()
     update_plot()
     meta = read_metadata(path)
+    n_frames = image.shape[0]
     linerate = 1 / meta['FrameData']['SI.hRoiManager.linePeriod']
-    fps = 1 / meta['FrameData']['SI.hRoiManager.scanFramePeriod']
+    fps = meta['FrameData']['SI.hRoiManager.scanFrameRate']
 
 
 image_select.on_change('value', select_image)
@@ -119,12 +125,18 @@ time_slider = Slider(start=0, end=1, value=0, step=1, title='Time')
 
 
 def update_frame(attr, old, new):
-    image = raw_source.data['image']
+    image = get_current_image()
     if len(image.shape) is 3:
         try:
-            image_source.data['image'] = [raw_source.data['image'][new, :, :]]
+            image_source.data['image'] = [image[new, :, :]]
         except IndexError:
             print('Failed to update image frame!')
+
+
+def calculate_2d_projection() -> np.ndarray:
+    image = get_current_image()
+    if len(image.shape) is 3:
+        return np.mean(image, axis=0)
 
 
 time_slider.on_change('value', update_frame)
@@ -147,13 +159,29 @@ roi_source = ColumnDataSource(data={
 
 plot = create_image_figure(image_source, roi_source)
 
+toggle_2d = Toggle(label='2D Projection')
+
+
+def show_2d_projection(attr, old, new):
+    if new is False:
+        time_slider.disabled = False
+        update_plot()
+    else:
+        time_slider.disabled = True
+        image_source.data['image'] = [calculate_2d_projection()]
+
+
+toggle_2d.on_change('active', show_2d_projection)
+
 main_layout = row(
     column(
         base_dir_input,
         image_select,
         time_slider,
+        toggle_2d,
     ),
     plot,
     name='main_layout',
 )
+
 curdoc().add_root(main_layout)
