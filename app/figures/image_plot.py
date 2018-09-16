@@ -1,5 +1,11 @@
 from numpy import ndarray
-from bokeh.models import ColumnDataSource, HoverTool, BoxEditTool, PolyDrawTool, PolyEditTool
+from bokeh.models import (
+    ColumnDataSource,
+    HoverTool,
+    BoxEditTool,
+    PolyDrawTool,
+    PolyEditTool,
+)
 from bokeh.plotting import Figure, figure
 
 
@@ -48,8 +54,6 @@ def create_image_figure(
         # dilate=True,
         name='rois',
     )
-
-    # vectors = ColumnDataSource(data={})
 
     lines = plot.multi_line(
         xs=[],

@@ -1,12 +1,9 @@
 import glob
-# import json
 import os
 
 from .image_file import ImageFile
 
 DEFAULT_PATH = os.path.abspath('./analysis')
-
-# EMPTY_ROI_SOURCE = dict(x=[], y=[], width=[], height=[])
 
 
 class DataAccessObject:
@@ -36,11 +33,3 @@ class DataAccessObject:
 
     def get_image(self, index: int):
         return self.images[index]
-
-    def get_roi_source(self, image: ImageFile):
-        file_path = image.rois_file_path
-        if os.path.isfile(file_path):
-            with open(file_path) as serialized_rois:
-                rois = json.load(serialized_rois)
-            return rois
-        return EMPTY_ROI_SOURCE
