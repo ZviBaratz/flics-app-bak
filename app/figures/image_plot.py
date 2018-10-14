@@ -12,6 +12,7 @@ from bokeh.plotting import Figure, figure
 def create_image_figure(
         image_source: ColumnDataSource,
         roi_source: ColumnDataSource,
+        vector_source: ColumnDataSource,
 ) -> Figure:
 
     try:
@@ -51,24 +52,26 @@ def create_image_figure(
         source=roi_source,
         fill_alpha=0.5,
         fill_color='#DAF7A6',
-        # dilate=True,
         name='rois',
     )
 
     lines = plot.multi_line(
-        xs=[],
-        ys=[],
+        xs='xs',
+        ys='ys',
+        source=vector_source,
         line_color='red',
         line_width=2,
         name='vectors',
     )
 
     circles = plot.circle(
-        [],
-        [],
+        x=[],
+        y=[],
         size=10,
         color='yellow',
     )
+
+    print(type(circles))
 
     plot.tools = [
         hover,

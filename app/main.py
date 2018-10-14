@@ -1,12 +1,14 @@
 import numpy as np
 import os
 import tifffile
+import xarray as xr
 
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import (
     ColumnDataSource, )
 from bokeh.models.widgets import (
+    Button,
     Select,
     Slider,
     TextInput,
@@ -47,7 +49,7 @@ def update_image_select(attr, old, new):
 
 base_dir_input.on_change('value', update_image_select)
 
-raw_source = ColumnDataSource(data=dict(image=[]))
+raw_source = ColumnDataSource(data=dict(image=[], meta=[]))
 
 image_select = Select(title='Image', value='---', options=['---'])
 
@@ -58,6 +60,23 @@ def get_full_path(relative_path: str) -> str:
         return [f for f in image_paths if f.endswith(relative_path)][0]
     except IndexError:
         print('Failed to find appropriate image path')
+
+
+def get_current_file_path() -> str:
+    return get_full_path(image_select.value)
+
+
+def get_current_file_name() -> str:
+    return os.path.basename(image_select.value).split('.')[0]
+
+
+def get_current_metset_path() -> str:
+    location = os.path.dirname(get_current_file_path())
+    return os.path.join(location, get_current_file_name() + '.nc')
+
+
+def read_current_metaset() -> xr.Dataset:
+    return xr.open_dataset(get_current_metset_path())
 
 
 def read_image_file(path: str) -> np.ndarray:
@@ -71,6 +90,14 @@ def read_image_file(path: str) -> np.ndarray:
 
 def get_current_image() -> np.ndarray:
     return raw_source.data['image'][0]
+
+
+def has_metaset() -> bool:
+    return os.path.isfile(get_current_metset_path())
+
+
+def get_current_metadata() -> dict:
+    return raw_source.data['meta'][0]
 
 
 def update_time_slider() -> None:
@@ -95,11 +122,37 @@ def update_plot_axes(width: int, height: int) -> None:
     plot.y_range.end = height
 
 
+def draw_existing_rois() -> None:
+    ds = read_current_metaset()
+    x = ds['roi_x'].values.tolist()
+    y = ds['roi_y'].values.tolist()
+    width = ds['roi_width'].values.tolist()
+    height = ds['roi_height'].values.tolist()
+    roi_source.data = dict(x=x, y=y, width=width, height=height)
+
+
+def draw_existing_vectors() -> None:
+    ds = read_current_metaset()
+    x_starts = ds['vector_x_start'].values.tolist()
+    x_ends = ds['vector_x_end'].values.tolist()
+    y_starts = ds['vector_y_start'].values.tolist()
+    y_ends = ds['vector_y_end'].values.tolist()
+    xs = [list(t) for t in list(zip(x_starts, x_ends))]
+    ys = [list(t) for t in list(zip(y_starts, y_ends))]
+    vector_source.data = dict(xs=xs, ys=ys)
+
+
 def update_plot() -> None:
     frame = get_current_frame()
     width, height = frame.shape[1], frame.shape[0]
     image_source.data = dict(image=[frame], dw=[width], dh=[height])
     update_plot_axes(width, height)
+    if has_metaset():
+        draw_existing_rois()
+        draw_existing_vectors()
+    else:
+        roi_source.data = dict(x=[], y=[], width=[], height=[])
+        vector_source.data = dict(xs=[], ys=[])
 
 
 def read_metadata(path: str) -> dict:
@@ -107,16 +160,25 @@ def read_metadata(path: str) -> dict:
         return f.scanimage_metadata
 
 
+def get_fps() -> float:
+    meta = get_current_metadata()
+    return meta['FrameData']['SI.hRoiManager.scanFrameRate']
+
+
+def get_line_rate() -> float:
+    meta = get_current_metadata()
+    line_period = meta['FrameData']['SI.hRoiManager.linePeriod']
+    return 1 / line_period
+
+
 def select_image(attr, old, new):
     path = get_full_path(new)
-    image = read_image_file(path)
-    raw_source.data['image'] = [image]
+    raw_source.data = {
+        'image': [read_image_file(path)],
+        'meta': [read_metadata(path)]
+    }
     update_time_slider()
     update_plot()
-    meta = read_metadata(path)
-    n_frames = image.shape[0]
-    linerate = 1 / meta['FrameData']['SI.hRoiManager.linePeriod']
-    fps = meta['FrameData']['SI.hRoiManager.scanFrameRate']
 
 
 image_select.on_change('value', select_image)
@@ -136,7 +198,7 @@ def update_frame(attr, old, new):
 def calculate_2d_projection() -> np.ndarray:
     image = get_current_image()
     if len(image.shape) is 3:
-        return np.mean(image, axis=0)
+        return np.max(image, axis=0)
 
 
 time_slider.on_change('value', update_frame)
@@ -157,7 +219,45 @@ roi_source = ColumnDataSource(data={
     'height': [],
 })
 
-plot = create_image_figure(image_source, roi_source)
+vector_source = ColumnDataSource(data={
+    'xs': [],
+    'ys': [],
+})
+
+plot = create_image_figure(image_source, roi_source, vector_source)
+
+
+def save():
+    image = get_current_image()
+    path = get_full_path(image_select.value)
+    data_vars = {
+        '2d_projection': (['x', 'y'], calculate_2d_projection()),
+    }
+    coords = {
+        'path': path,
+        'x': np.arange(image.shape[2]),
+        'y': np.arange(image.shape[1]),
+        'time': np.arange(image.shape[0]),
+        'roi': np.arange(len(roi_source.data['x'])),
+        'roi_x': roi_source.data['x'],
+        'roi_y': roi_source.data['y'],
+        'roi_width': roi_source.data['width'],
+        'roi_height': roi_source.data['height'],
+        'vector': np.arange(len(vector_source.data['xs'])),
+        'vector_x_start': [v[0] for v in vector_source.data['xs']],
+        'vector_x_end': [v[1] for v in vector_source.data['xs']],
+        'vector_y_start': [v[0] for v in vector_source.data['ys']],
+        'vector_y_end': [v[1] for v in vector_source.data['ys']],
+        'fps': get_fps(),
+        'line_rate': get_line_rate(),
+    }
+    ds = xr.Dataset(data_vars, coords)
+    dest = get_current_metset_path()
+    ds.to_netcdf(dest)
+
+
+save_button = Button(label='Save', button_type="success")
+save_button.on_click(save)
 
 toggle_2d = Toggle(label='2D Projection')
 
@@ -179,6 +279,7 @@ main_layout = row(
         image_select,
         time_slider,
         toggle_2d,
+        save_button,
     ),
     plot,
     name='main_layout',
