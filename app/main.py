@@ -9,12 +9,14 @@ from bokeh.models import (
     ColumnDataSource, )
 from bokeh.models.widgets import (
     Button,
+    Paragraph,
     Select,
     Slider,
     TextInput,
     Toggle,
 )
 from figures.image_plot import create_image_figure
+from figures.roi_plot import create_roi_figure
 
 base_dir_input = TextInput(value='Enter path...', title='Base Directory')
 IMAGE_EXT = '.tif'
@@ -179,6 +181,8 @@ def select_image(attr, old, new):
     }
     update_time_slider()
     update_plot()
+    linerate_paragraph.text = f'Line Rate:\t{get_line_rate()}'
+    fps_paragraph.text = f'FPS:\t{get_fps()}'
 
 
 image_select.on_change('value', select_image)
@@ -191,6 +195,11 @@ def update_frame(attr, old, new):
     if len(image.shape) is 3:
         try:
             image_source.data['image'] = [image[new, :, :]]
+            if roi_source.selected.indices:
+                roi_plot_source.data['image'] = [
+                    get_roi_data(roi_source.selected.indices[0],
+                                 time_slider.value)
+                ]
         except IndexError:
             print('Failed to update image frame!')
 
@@ -218,6 +227,38 @@ roi_source = ColumnDataSource(data={
     'width': [],
     'height': [],
 })
+
+roi_plot_source = ColumnDataSource(data=dict(image=[], dw=[], dh=[]))
+
+roi_plot = create_roi_figure(roi_plot_source)
+
+
+def change_selected_roi(attr, old, new):
+    if new:
+        roi_index = new.indices[0]
+        roi_data = get_roi_data(roi_index, time_slider.value)
+        roi_plot_source.data = dict(
+            image=[roi_data], dw=[roi_data.shape[1]], dh=[roi_data.shape[0]])
+        roi_plot.height = roi_data.shape[0] * 3
+        roi_plot.width = roi_data.shape[1] * 3
+        roi_plot.x_range.end = roi_data.shape[1]
+        roi_plot.y_range.end = roi_data.shape[0]
+
+
+roi_source.on_change('selected', change_selected_roi)
+
+
+def get_roi_data(roi_index: int, frame: int):
+    width = round(roi_source.data['width'][roi_index])
+    height = round(roi_source.data['height'][roi_index])
+    x_center = round(roi_source.data['x'][roi_index])
+    y_center = round(roi_source.data['y'][roi_index])
+    x_start = x_center - width // 2
+    x_end = x_center + width // 2
+    y_start = y_center - height // 2
+    y_end = y_center + height // 2
+    return get_current_image()[frame, y_start:y_end, x_start:x_end]
+
 
 vector_source = ColumnDataSource(data={
     'xs': [],
@@ -273,15 +314,24 @@ def show_2d_projection(attr, old, new):
 
 toggle_2d.on_change('active', show_2d_projection)
 
+linerate_paragraph = Paragraph(text='Line Rate:\t')
+fps_paragraph = Paragraph(text='FPS:\t')
+
+run_flics_button = Button(label='Run FLICS', button_type='primary')
+
 main_layout = row(
     column(
         base_dir_input,
         image_select,
         time_slider,
+        linerate_paragraph,
+        fps_paragraph,
         toggle_2d,
         save_button,
+        run_flics_button,
     ),
     plot,
+    roi_plot,
     name='main_layout',
 )
 
