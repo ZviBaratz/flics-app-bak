@@ -49,6 +49,16 @@ def update_image_select(attr, old, new):
     image_select.options = ['---']
 
 
+def get_db_path() -> str:
+    if os.path.isdir(base_dir_input.value):
+        return os.path.join(base_dir_input.value, 'db.nc')
+    return None
+
+
+def read_db() -> xr.Dataset:
+    return xr.open_dataset(get_db_path())
+
+
 base_dir_input.on_change('value', update_image_select)
 
 raw_source = ColumnDataSource(data=dict(image=[], meta=[]))
@@ -289,12 +299,20 @@ def save():
         'vector_x_end': [v[1] for v in vector_source.data['xs']],
         'vector_y_start': [v[0] for v in vector_source.data['ys']],
         'vector_y_end': [v[1] for v in vector_source.data['ys']],
-        'fps': get_fps(),
+        'frame_rate': get_fps(),
         'line_rate': get_line_rate(),
+        'corr_calc_state': 0,
+        'fitting_state': 0,
     }
     ds = xr.Dataset(data_vars, coords)
-    dest = get_current_metset_path()
-    ds.to_netcdf(dest)
+    # dest = get_current_metset_path()
+    db = read_db()
+    try:
+        existing = db.sel(path=path)
+        existing = ds
+    except KeyError:
+        db = xr.concat([db, ds], dim='path')
+    db.to_netcdf(get_db_path())
 
 
 save_button = Button(label='Save', button_type="success")
