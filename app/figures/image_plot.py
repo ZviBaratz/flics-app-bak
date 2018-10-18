@@ -71,8 +71,6 @@ def create_image_figure(
         color='yellow',
     )
 
-    print(type(circles))
-
     plot.tools = [
         hover,
         BoxEditTool(renderers=[r1]),

@@ -4,7 +4,7 @@ import tifffile
 import xarray as xr
 
 from bokeh.io import curdoc
-from bokeh.layouts import column, row
+from bokeh.layouts import column, row, widgetbox
 from bokeh.models import (
     ColumnDataSource, )
 from bokeh.models.widgets import (
@@ -45,6 +45,7 @@ def update_image_select(attr, old, new):
         relative_paths = [path[len(new):] for path in image_paths]
         if relative_paths:
             image_select.options = relative_paths
+            image_select.value = image_select.options[0]
             return
     image_select.options = ['---']
 
@@ -56,7 +57,10 @@ def get_db_path() -> str:
 
 
 def read_db() -> xr.Dataset:
-    return xr.open_dataset(get_db_path())
+    try:
+        return xr.open_dataset(get_db_path())
+    except FileNotFoundError:
+        return xr.Dataset()
 
 
 base_dir_input.on_change('value', update_image_select)
@@ -87,10 +91,6 @@ def get_current_metset_path() -> str:
     return os.path.join(location, get_current_file_name() + '.nc')
 
 
-def read_current_metaset() -> xr.Dataset:
-    return xr.open_dataset(get_current_metset_path())
-
-
 def read_image_file(path: str) -> np.ndarray:
     with tifffile.TiffFile(path, movie=True) as f:
         try:
@@ -104,12 +104,15 @@ def get_current_image() -> np.ndarray:
     return raw_source.data['image'][0]
 
 
-def has_metaset() -> bool:
-    return os.path.isfile(get_current_metset_path())
+# def has_metaset() -> bool:
+# return os.path.isfile(get_current_metset_path())
 
 
 def get_current_metadata() -> dict:
-    return raw_source.data['meta'][0]
+    try:
+        return raw_source.data['meta'][0]
+    except IndexError:
+        return None
 
 
 def update_time_slider() -> None:
@@ -120,6 +123,7 @@ def update_time_slider() -> None:
     else:
         time_slider.end = 1
         time_slider.disabled = True
+    time_slider.value = 0
 
 
 def get_current_frame() -> np.ndarray:
@@ -135,16 +139,20 @@ def update_plot_axes(width: int, height: int) -> None:
 
 
 def draw_existing_rois() -> None:
-    ds = read_current_metaset()
-    x = ds['roi_x'].values.tolist()
-    y = ds['roi_y'].values.tolist()
-    width = ds['roi_width'].values.tolist()
-    height = ds['roi_height'].values.tolist()
-    roi_source.data = dict(x=x, y=y, width=width, height=height)
+    ds = read_db()
+    # roi_data = ds['roi_data'].values
+    # for roi in roi_data:
+    #     x = roi[0]
+    # x = ds['roi_x'].values.tolist()
+    # y = ds['roi_y'].values.tolist()
+    # width = ds['roi_width'].values.tolist()
+    # height = ds['roi_height'].values.tolist()
+    # roi_source.data = dict(x=x, y=y, width=width, height=height)
+    ds.close()
 
 
 def draw_existing_vectors() -> None:
-    ds = read_current_metaset()
+    ds = read_db()
     x_starts = ds['vector_x_start'].values.tolist()
     x_ends = ds['vector_x_end'].values.tolist()
     y_starts = ds['vector_y_start'].values.tolist()
@@ -152,6 +160,7 @@ def draw_existing_vectors() -> None:
     xs = [list(t) for t in list(zip(x_starts, x_ends))]
     ys = [list(t) for t in list(zip(y_starts, y_ends))]
     vector_source.data = dict(xs=xs, ys=ys)
+    ds.close()
 
 
 def update_plot() -> None:
@@ -159,12 +168,15 @@ def update_plot() -> None:
     width, height = frame.shape[1], frame.shape[0]
     image_source.data = dict(image=[frame], dw=[width], dh=[height])
     update_plot_axes(width, height)
-    if has_metaset():
+    path = get_full_path(image_select.value)
+    db = read_db()
+    if 'path' in db and path in db['path'].values:
         draw_existing_rois()
         draw_existing_vectors()
     else:
         roi_source.data = dict(x=[], y=[], width=[], height=[])
         vector_source.data = dict(xs=[], ys=[])
+    db.close()
 
 
 def read_metadata(path: str) -> dict:
@@ -172,18 +184,92 @@ def read_metadata(path: str) -> dict:
         return f.scanimage_metadata
 
 
-def get_fps() -> float:
+def get_frame_rate() -> float:
     meta = get_current_metadata()
-    return meta['FrameData']['SI.hRoiManager.scanFrameRate']
+    if meta:
+        return meta['FrameData']['SI.hRoiManager.scanFrameRate']
 
 
 def get_line_rate() -> float:
     meta = get_current_metadata()
-    line_period = meta['FrameData']['SI.hRoiManager.linePeriod']
-    return 1 / line_period
+    if meta:
+        line_period = meta['FrameData']['SI.hRoiManager.linePeriod']
+        return 1 / line_period
+
+
+def get_number_of_rows() -> float:
+    meta = get_current_metadata()
+    if meta:
+        return meta['FrameData']['SI.hRoiManager.linesPerFrame']
+
+
+def get_number_of_columns() -> float:
+    meta = get_current_metadata()
+    if meta:
+        return meta['FrameData']['SI.hRoiManager.pixelsPerLine']
+
+
+def get_fov() -> float:
+    try:
+        return int(fov_input.value)
+    except ValueError:
+        print('Invalid input! FOV must be an integer.')
+
+
+def get_zoom_factor() -> float:
+    meta = get_current_metadata()
+    if meta:
+        return meta['FrameData']['SI.hRoiManager.scanZoomFactor']
+
+
+def calc_x_pixel_to_micron() -> float:
+    try:
+        return get_number_of_columns() / (get_fov() * get_zoom_factor())
+    except TypeError:
+        pass
+
+
+def calc_y_pixel_to_micron() -> float:
+    try:
+        return get_number_of_rows() / (get_fov() * get_zoom_factor())
+    except TypeError:
+        pass
+
+
+PARAM_GETTERS = {
+    'zoom_factor': get_zoom_factor,
+    'n_rows': get_number_of_rows,
+    'n_columns': get_number_of_columns,
+    'frame_rate': get_frame_rate,
+    'line_rate': get_line_rate,
+    'x_pixel_to_micron': calc_x_pixel_to_micron,
+    'y_pixel_to_micron': calc_y_pixel_to_micron,
+}
+
+
+def get_string(param: str):
+    try:
+        value = PARAM_GETTERS[param]()
+        if value:
+            return str(value)
+    except KeyError:
+        return 'INVALID'
+    return '---'
+
+
+def update_parameter_widgets() -> None:
+    line_rate_input.value = get_string('line_rate')
+    frame_rate_input.value = get_string('frame_rate')
+    rows_input.value = get_string('n_rows')
+    columns_input.value = get_string('n_columns')
+    zoom_factor_input.value = get_string('zoom_factor')
+    x_pixel_to_micron_input.value = get_string('x_pixel_to_micron')
+    y_pixel_to_micron_input.value = get_string('y_pixel_to_micron')
 
 
 def select_image(attr, old, new):
+    message_paragraph.style = {'color': 'orange'}
+    message_paragraph.text = 'Loading...'
     path = get_full_path(new)
     raw_source.data = {
         'image': [read_image_file(path)],
@@ -191,8 +277,9 @@ def select_image(attr, old, new):
     }
     update_time_slider()
     update_plot()
-    linerate_paragraph.text = f'Line Rate:\t{get_line_rate()}'
-    fps_paragraph.text = f'FPS:\t{get_fps()}'
+    update_parameter_widgets()
+    message_paragraph.style = {'color': 'green'}
+    message_paragraph.text = 'Image successfully loaded!'
 
 
 image_select.on_change('value', select_image)
@@ -277,46 +364,7 @@ vector_source = ColumnDataSource(data={
 
 plot = create_image_figure(image_source, roi_source, vector_source)
 
-
-def save():
-    image = get_current_image()
-    path = get_full_path(image_select.value)
-    data_vars = {
-        '2d_projection': (['x', 'y'], calculate_2d_projection()),
-    }
-    coords = {
-        'path': path,
-        'x': np.arange(image.shape[2]),
-        'y': np.arange(image.shape[1]),
-        'time': np.arange(image.shape[0]),
-        'roi': np.arange(len(roi_source.data['x'])),
-        'roi_x': roi_source.data['x'],
-        'roi_y': roi_source.data['y'],
-        'roi_width': roi_source.data['width'],
-        'roi_height': roi_source.data['height'],
-        'vector': np.arange(len(vector_source.data['xs'])),
-        'vector_x_start': [v[0] for v in vector_source.data['xs']],
-        'vector_x_end': [v[1] for v in vector_source.data['xs']],
-        'vector_y_start': [v[0] for v in vector_source.data['ys']],
-        'vector_y_end': [v[1] for v in vector_source.data['ys']],
-        'frame_rate': get_fps(),
-        'line_rate': get_line_rate(),
-        'corr_calc_state': 0,
-        'fitting_state': 0,
-    }
-    ds = xr.Dataset(data_vars, coords)
-    # dest = get_current_metset_path()
-    db = read_db()
-    try:
-        existing = db.sel(path=path)
-        existing = ds
-    except KeyError:
-        db = xr.concat([db, ds], dim='path')
-    db.to_netcdf(get_db_path())
-
-
 save_button = Button(label='Save', button_type="success")
-save_button.on_click(save)
 
 toggle_2d = Toggle(label='2D Projection')
 
@@ -332,21 +380,131 @@ def show_2d_projection(attr, old, new):
 
 toggle_2d.on_change('active', show_2d_projection)
 
-linerate_paragraph = Paragraph(text='Line Rate:\t')
-fps_paragraph = Paragraph(text='FPS:\t')
+fov_input = TextInput(value='870', title='FOV (μm)')
+
+
+def update_pixel_to_micron(attr, old, new):
+    x_pixel_to_micron_input.value = str(calc_x_pixel_to_micron())
+    y_pixel_to_micron_input.value = str(calc_y_pixel_to_micron())
+
+
+fov_input.on_change('value', update_pixel_to_micron)
+
+zoom_factor_input = TextInput(value='---', title='Zoom Factor')
+zoom_factor_input.disabled = True
+columns_input = TextInput(value='---', title='Columns')
+columns_input.disabled = True
+rows_input = TextInput(value='---', title='Rows')
+rows_input.disabled = True
+x_pixel_to_micron_input = TextInput(value='---', title='Pixel to Micron (X)')
+y_pixel_to_micron_input = TextInput(value='---', title='Pixel to Micron (Y)')
+line_rate_input = TextInput(value='---', title='Line Rate')
+frame_rate_input = TextInput(value='---', title='Frame Rate')
 
 run_flics_button = Button(label='Run FLICS', button_type='primary')
 
+message_paragraph = Paragraph(text='')
+
+
+def get_roi_params(index: int):
+    values = roi_source.data
+    return [
+        values['x'][index],
+        values['y'][index],
+        values['width'][index],
+        values['height'][index],
+    ]
+
+
+def get_roi_data_by_roi() -> list:
+    roi_data = np.full((50, 4), np.nan)
+    for index in range(len(roi_source.data['x'])):
+        roi_params = get_roi_params(index)
+        roi_data[index, :] = roi_params
+    return roi_data
+
+
+def create_data_dict() -> dict:
+    roi_data = get_roi_data_by_roi()
+    return {
+        '2d_projection': (['x', 'y'], calculate_2d_projection()),
+        'line_rate': float(line_rate_input.value),
+        'frame_rate': float(frame_rate_input.value),
+        # 'roi_x': roi_source.data['x'],
+        # 'roi_y': roi_source.data['y'],
+        # 'roi_width': roi_source.data['width'],
+        # 'roi_height': roi_source.data['height'],
+        'roi_data': (['roi_num', 'roi_loc'], roi_data),
+        'vector_x_start': [v[0] for v in vector_source.data['xs']],
+        'vector_x_end': [v[1] for v in vector_source.data['xs']],
+        'vector_y_start': [v[0] for v in vector_source.data['ys']],
+        'vector_y_end': [v[1] for v in vector_source.data['ys']],
+        'corr_calc_state': 0,
+        'fitting_state': 0,
+    }
+
+
+def create_coords_dict(path: str) -> dict:
+    image = get_current_image()
+    return {
+        'path': path,
+        'x': np.arange(image.shape[2]),
+        'y': np.arange(image.shape[1]),
+        'time': np.arange(image.shape[0]),
+        'roi_num': np.arange(50, dtype=np.uint8),
+        'roi_loc': ['x', 'y', 'width', 'height'],
+        'vector': np.arange(50, dtype=np.uint8),
+    }
+
+
+def save():
+    path = get_full_path(image_select.value)
+    db = read_db()
+    data_vars = create_data_dict()
+    if 'path' not in db:
+        print('creating DB file')
+        db.close()
+        coords = create_coords_dict(path)
+        ds = xr.Dataset(data_vars, coords)
+        db_path = get_db_path()
+        ds.to_netcdf(db_path)
+        ds.close()
+        return
+
+    if path in db['path'].values:
+        print('trying to update DB for existing path')
+        for key, value in data_vars.items():
+            if db[key].loc[{'path': path}] != value:
+                db[key].loc[{'path': path}] = value
+    else:
+        print('trying to update DB with new path')
+        coords = create_coords_dict(path)
+        ds = xr.Dataset(data_vars, coords)
+        db = xr.concat([db, ds], dim='path')
+    db_path = get_db_path()
+    db.close()
+    db.to_netcdf(db_path, mode='w')
+
+
+save_button.on_click(save)
+
 main_layout = row(
-    column(
+    widgetbox(
         base_dir_input,
         image_select,
         time_slider,
-        linerate_paragraph,
-        fps_paragraph,
+        rows_input,
+        columns_input,
+        zoom_factor_input,
+        fov_input,
+        x_pixel_to_micron_input,
+        y_pixel_to_micron_input,
+        line_rate_input,
+        frame_rate_input,
         toggle_2d,
         save_button,
         run_flics_button,
+        message_paragraph,
     ),
     plot,
     roi_plot,
