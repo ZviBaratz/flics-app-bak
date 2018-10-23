@@ -53,7 +53,6 @@ def update_image_select(attr, old, new):
 def get_db_path() -> str:
     if os.path.isdir(base_dir_input.value):
         return os.path.join(base_dir_input.value, 'db.nc')
-    return None
 
 
 def read_db() -> xr.Dataset:
@@ -104,10 +103,6 @@ def get_current_image() -> np.ndarray:
     return raw_source.data['image'][0]
 
 
-# def has_metaset() -> bool:
-# return os.path.isfile(get_current_metset_path())
-
-
 def get_current_metadata() -> dict:
     try:
         return raw_source.data['meta'][0]
@@ -139,7 +134,33 @@ def update_plot_axes(width: int, height: int) -> None:
 
 
 def draw_existing_rois() -> None:
-    ds = read_db()
+    db_path = get_db_path()
+    path = get_full_path(image_select.value)
+    with xr.open_dataset(db_path) as db:
+        if len(db['path']) > 1:
+            roi_data = db['roi_data'].loc[{'path': path}].values.tolist()
+        else:
+            roi_data = db['roi_data'].values.tolist()
+        print('ROI data:')
+        print(roi_data)
+        x = []
+        y = []
+        width = []
+        height = []
+        for roi in roi_data:
+            x.append(roi_data[0])
+            y.append(roi_data[1])
+            width.append(roi_data[2])
+            height.append(roi_data[3])
+        print('Fixed:')
+        print(f'x:\t{x}')
+        print(f'y:\t{y}')
+        print(f'width:\t{width}')
+        print(f'height:\t{height}')
+        print('Updating ROI source...')
+        roi_source.data = dict(x=x, y=y, width=width, height=height)
+        print('Done!')
+    # ds = read_db()
     # roi_data = ds['roi_data'].values
     # for roi in roi_data:
     #     x = roi[0]
@@ -148,19 +169,20 @@ def draw_existing_rois() -> None:
     # width = ds['roi_width'].values.tolist()
     # height = ds['roi_height'].values.tolist()
     # roi_source.data = dict(x=x, y=y, width=width, height=height)
-    ds.close()
+    # ds.close()
 
 
 def draw_existing_vectors() -> None:
-    ds = read_db()
-    x_starts = ds['vector_x_start'].values.tolist()
-    x_ends = ds['vector_x_end'].values.tolist()
-    y_starts = ds['vector_y_start'].values.tolist()
-    y_ends = ds['vector_y_end'].values.tolist()
-    xs = [list(t) for t in list(zip(x_starts, x_ends))]
-    ys = [list(t) for t in list(zip(y_starts, y_ends))]
-    vector_source.data = dict(xs=xs, ys=ys)
-    ds.close()
+    # ds = read_db()
+    # x_starts = ds['vector_x_start'].values.tolist()
+    # x_ends = ds['vector_x_end'].values.tolist()
+    # y_starts = ds['vector_y_start'].values.tolist()
+    # y_ends = ds['vector_y_end'].values.tolist()
+    # xs = [list(t) for t in list(zip(x_starts, x_ends))]
+    # ys = [list(t) for t in list(zip(y_starts, y_ends))]
+    # vector_source.data = dict(xs=xs, ys=ys)
+    # ds.close()
+    pass
 
 
 def update_plot() -> None:
@@ -169,14 +191,15 @@ def update_plot() -> None:
     image_source.data = dict(image=[frame], dw=[width], dh=[height])
     update_plot_axes(width, height)
     path = get_full_path(image_select.value)
-    db = read_db()
-    if 'path' in db and path in db['path'].values:
-        draw_existing_rois()
-        draw_existing_vectors()
-    else:
-        roi_source.data = dict(x=[], y=[], width=[], height=[])
-        vector_source.data = dict(xs=[], ys=[])
-    db.close()
+    db_path = get_db_path()
+    if os.path.isfile(db_path):
+        with xr.open_dataset(db_path) as db:
+            if 'path' in db and path in db['path'].values:
+                draw_existing_rois()
+                draw_existing_vectors()
+                return
+    roi_source.data = dict(x=[], y=[], width=[], height=[])
+    vector_source.data = dict(xs=[], ys=[])
 
 
 def read_metadata(path: str) -> dict:
@@ -430,10 +453,6 @@ def create_data_dict() -> dict:
         '2d_projection': (['x', 'y'], calculate_2d_projection()),
         'line_rate': float(line_rate_input.value),
         'frame_rate': float(frame_rate_input.value),
-        # 'roi_x': roi_source.data['x'],
-        # 'roi_y': roi_source.data['y'],
-        # 'roi_width': roi_source.data['width'],
-        # 'roi_height': roi_source.data['height'],
         'roi_data': (['roi_num', 'roi_loc'], roi_data),
         'vector_x_start': [v[0] for v in vector_source.data['xs']],
         'vector_x_end': [v[1] for v in vector_source.data['xs']],
@@ -448,42 +467,44 @@ def create_coords_dict(path: str) -> dict:
     image = get_current_image()
     return {
         'path': path,
-        'x': np.arange(image.shape[2]),
-        'y': np.arange(image.shape[1]),
+        'pix_x': np.arange(image.shape[2]),
+        'pix_y': np.arange(image.shape[1]),
         'time': np.arange(image.shape[0]),
         'roi_num': np.arange(50, dtype=np.uint8),
         'roi_loc': ['x', 'y', 'width', 'height'],
-        'vector': np.arange(50, dtype=np.uint8),
+        'vector_num': np.arange(50, dtype=np.uint8),
     }
 
 
 def save():
     path = get_full_path(image_select.value)
-    db = read_db()
     data_vars = create_data_dict()
-    if 'path' not in db:
-        print('creating DB file')
-        db.close()
-        coords = create_coords_dict(path)
-        ds = xr.Dataset(data_vars, coords)
-        db_path = get_db_path()
-        ds.to_netcdf(db_path)
-        ds.close()
-        return
-
-    if path in db['path'].values:
-        print('trying to update DB for existing path')
-        for key, value in data_vars.items():
-            if db[key].loc[{'path': path}] != value:
-                db[key].loc[{'path': path}] = value
-    else:
-        print('trying to update DB with new path')
-        coords = create_coords_dict(path)
-        ds = xr.Dataset(data_vars, coords)
-        db = xr.concat([db, ds], dim='path')
     db_path = get_db_path()
-    db.close()
-    db.to_netcdf(db_path, mode='w')
+    if os.path.isfile(db_path):
+        with xr.open_dataset(db_path) as db:
+            if path in db['path'].values:
+                print('trying to update DB for existing path')
+                for key, value in data_vars.items():
+                    if len(db['path']) > 1:
+                        if db[key].loc[{
+                                'path': path
+                        }].values.tolist() != value:
+                            db[key].loc[{'path': path}] = value
+                    else:
+                        if db[key].values.tolist() != value:
+                            db[key] = value
+            else:
+                print('trying to update DB with new path')
+                coords = create_coords_dict(path)
+                ds = xr.Dataset(data_vars, coords)
+                db = xr.concat([db, ds], dim='path')
+            os.remove(db_path)
+            db.to_netcdf(get_db_path(), mode='w')
+    else:
+        print('creating DB file')
+        coords = create_coords_dict(path)
+        db = xr.Dataset(data_vars, coords)
+        db.to_netcdf(db_path)
 
 
 save_button.on_click(save)
