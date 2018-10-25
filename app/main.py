@@ -4,7 +4,7 @@ import tifffile
 import xarray as xr
 
 from bokeh.io import curdoc
-from bokeh.layouts import column, row, widgetbox
+from bokeh.layouts import row, widgetbox
 from bokeh.models import (
     ColumnDataSource, )
 from bokeh.models.widgets import (
@@ -133,51 +133,42 @@ def update_plot_axes(width: int, height: int) -> None:
     plot.y_range.end = height
 
 
-def draw_existing_rois() -> None:
-    db_path = get_db_path()
+def draw_existing_rois(db: xr.Dataset) -> None:
     path = get_full_path(image_select.value)
-    with xr.open_dataset(db_path) as db:
-        if type(db['path'].values.tolist()) is not str:
-            roi_data = np.asarray(db['roi_data'].loc[{
-                'path': path
-            }].values.tolist())
-        else:
-            roi_data = np.asarray(db['roi_data'].values.tolist())
-        roi_data = roi_data[~np.isnan(roi_data).any(axis=1)]
-        x = []
-        y = []
-        width = []
-        height = []
-        for roi in roi_data:
-            x.append(roi[0])
-            y.append(roi[1])
-            width.append(roi[2])
-            height.append(roi[3])
-        roi_source.data = dict(x=x, y=y, width=width, height=height)
+    if type(db['path'].values.tolist()) is not str:
+        roi_data = np.asarray(db['roi_data'].loc[{
+            'path': path
+        }].values.tolist())
+    else:
+        roi_data = np.asarray(db['roi_data'].values.tolist())
+    roi_data = roi_data[~np.isnan(roi_data).any(axis=1)]
+    x = []
+    y = []
+    width = []
+    height = []
+    for roi in roi_data:
+        x.append(roi[0])
+        y.append(roi[1])
+        width.append(roi[2])
+        height.append(roi[3])
+    roi_source.data = dict(x=x, y=y, width=width, height=height)
 
 
-def draw_existing_vectors() -> None:
-    db_path = get_db_path()
+def draw_existing_vectors(db: xr.Dataset) -> None:
     path = get_full_path(image_select.value)
-    with xr.open_dataset(db_path) as db:
-        if type(db['path'].values.tolist()) is not str:
-            vector_data = np.asarray(db['vector_data'].loc[{
-                'path': path
-            }].values.tolist())
-        else:
-            vector_data = np.asarray(db['vector_data'].values.tolist())
-        vector_data = vector_data[~np.isnan(vector_data).any(axis=1)]
-        x_start = []
-        x_end = []
-        y_start = []
-        y_end = []
-        for vector in vector_data:
-            x_start.append(vector[0])
-            x_end.append(vector[1])
-            y_start.append(vector[2])
-            y_end.append(vector[3])
-        vector_source.data = dict(
-            x_start=x_start, x_end=x_end, y_start=y_start, y_end=y_end)
+    if type(db['path'].values.tolist()) is not str:
+        vector_data = np.asarray(db['vector_data'].loc[{
+            'path': path
+        }].values.tolist())
+    else:
+        vector_data = np.asarray(db['vector_data'].values.tolist())
+    vector_data = vector_data[~np.isnan(vector_data).any(axis=1)]
+    xs = []
+    ys = []
+    for vector in vector_data:
+        xs.append([vector[0], vector[1]])
+        ys.append([vector[2], vector[3]])
+    vector_source.data = dict(xs=xs, ys=ys)
 
 
 def update_plot() -> None:
@@ -190,8 +181,8 @@ def update_plot() -> None:
     if os.path.isfile(db_path):
         with xr.open_dataset(db_path) as db:
             if 'path' in db and path in db['path'].values:
-                draw_existing_rois()
-                draw_existing_vectors()
+                draw_existing_rois(db)
+                draw_existing_vectors(db)
                 return
     roi_source.data = dict(x=[], y=[], width=[], height=[])
     vector_source.data = dict(xs=[], ys=[])
@@ -426,7 +417,7 @@ run_flics_button = Button(label='Run FLICS', button_type='primary')
 message_paragraph = Paragraph(text='')
 
 
-def get_roi_params(index: int):
+def get_roi_params(index: int) -> list:
     values = roi_source.data
     return [
         values['x'][index],
@@ -436,7 +427,7 @@ def get_roi_params(index: int):
     ]
 
 
-def get_vector_params(index: int):
+def get_vector_params(index: int) -> list:
     values = vector_source.data
     return [
         values['xs'][index][0],
@@ -448,33 +439,28 @@ def get_vector_params(index: int):
 
 def get_roi_data_by_index() -> np.ndarray:
     roi_data = np.full((50, 4), np.nan)
-    for index in range(len(roi_source.data['x'])):
-        roi_params = get_roi_params(index)
-        roi_data[index, :] = roi_params
+    n_rois = len(roi_source.data['x'])
+    for index in range(n_rois):
+        roi_data[index, :] = get_roi_params(index)
     return roi_data
 
 
 def get_vector_data_by_index() -> np.ndarray:
     vector_data = np.full((50, 4), np.nan)
-    for index in range(len(vector_source.data['xs'])):
-        vector_params = get_vector_params(index)
-        vector_data[index, :] = vector_params
+    n_vectors = len(vector_source.data['xs'])
+    for index in range(n_vectors):
+        vector_data[index, :] = get_vector_params(index)
     return vector_data
 
 
 def create_data_dict() -> dict:
-    roi_data = get_roi_data_by_index()
-    vector_data = get_vector_data_by_index()
-    print('ROI data:')
-    print(roi_data[~np.isnan(roi_data).any(axis=1)])
-    print('Vector data:')
-    print(vector_data[~np.isnan(vector_data).any(axis=1)])
     return {
         '2d_projection': (['x', 'y'], calculate_2d_projection()),
         'line_rate': float(line_rate_input.value),
         'frame_rate': float(frame_rate_input.value),
-        'roi_data': (['roi_num', 'roi_loc'], roi_data),
-        'vector_data': (['vector_num', 'vector_loc'], vector_data),
+        'roi_data': (['roi_num', 'roi_loc'], get_roi_data_by_index()),
+        'vector_data': (['vector_num', 'vector_loc'],
+                        get_vector_data_by_index()),
         'corr_calc_state': 0,
         'fitting_state': 0,
     }
@@ -519,7 +505,6 @@ def save():
             os.remove(db_path)
             db.to_netcdf(get_db_path(), mode='w')
     else:
-        print('creating DB file')
         coords = create_coords_dict(path)
         db = xr.Dataset(data_vars, coords)
         db.to_netcdf(db_path)
