@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import os
 import tifffile
@@ -451,6 +452,11 @@ def get_vector_data_by_index() -> np.ndarray:
     for index in range(n_vectors):
         vector_data[index, :] = get_vector_params(index)
     return vector_data
+
+
+def get_vector_angle(index: int) -> float:
+    x0, x1, y0, y1 = get_vector_params(index)
+    return math.atan2(y1 - y0, x1 - x0)
 
 
 def create_data_dict() -> dict:
