@@ -4,10 +4,11 @@ import os
 import tifffile
 import xarray as xr
 
+from analysis.flics import Analysis
+from analysis.global_fit import GlobalFit
 from bokeh.io import curdoc
-from bokeh.layouts import row, widgetbox
-from bokeh.models import (
-    ColumnDataSource, )
+from bokeh.layouts import column, row, widgetbox
+from bokeh.models import ColumnDataSource
 from bokeh.models.widgets import (
     Button,
     Paragraph,
@@ -16,11 +17,28 @@ from bokeh.models.widgets import (
     TextInput,
     Toggle,
 )
+from bokeh.palettes import Category20_20
 from figures.image_plot import create_image_figure
-from figures.roi_plot import create_roi_figure
+from figures.results_plot import (
+    create_results_plot,
+    create_cross_correlation_plot,
+)
+from functools import partial
 
 base_dir_input = TextInput(value='Enter path...', title='Base Directory')
 IMAGE_EXT = '.tif'
+
+config = {
+    'null': '---',
+    'beam_waist_xy': '0.5e-6',
+    'beam_waist_z': '2e-6',
+    'rbc_radius': '4e-6',
+    'tau': '0.001',
+    's': 1,
+    'min_distance': '0',
+    'max_distance': '300',
+    'distance_step': '20',
+}
 
 
 def get_file_paths(ext: str = IMAGE_EXT) -> list:
@@ -48,7 +66,7 @@ def update_image_select(attr, old, new):
             image_select.options = relative_paths
             image_select.value = image_select.options[0]
             return
-    image_select.options = ['---']
+    image_select.options = [config['null']]
 
 
 def get_db_path() -> str:
@@ -67,7 +85,8 @@ base_dir_input.on_change('value', update_image_select)
 
 raw_source = ColumnDataSource(data=dict(image=[], meta=[]))
 
-image_select = Select(title='Image', value='---', options=['---'])
+image_select = Select(
+    title='Image', value=config['null'], options=[config['null']])
 
 
 def get_full_path(relative_path: str) -> str:
@@ -246,10 +265,13 @@ def calc_y_pixel_to_micron() -> float:
         pass
 
 
+def get_image_shape() -> str:
+    return f'{get_number_of_rows()}x{get_number_of_columns()}'
+
+
 PARAM_GETTERS = {
     'zoom_factor': get_zoom_factor,
-    'n_rows': get_number_of_rows,
-    'n_columns': get_number_of_columns,
+    'image_shape': get_image_shape,
     'frame_rate': get_frame_rate,
     'line_rate': get_line_rate,
     'x_pixel_to_micron': calc_x_pixel_to_micron,
@@ -264,14 +286,13 @@ def get_string(param: str):
             return str(value)
     except KeyError:
         return 'INVALID'
-    return '---'
+    return config['null']
 
 
 def update_parameter_widgets() -> None:
     line_rate_input.value = get_string('line_rate')
     frame_rate_input.value = get_string('frame_rate')
-    rows_input.value = get_string('n_rows')
-    columns_input.value = get_string('n_columns')
+    image_shape_input.value = get_string('image_shape')
     zoom_factor_input.value = get_string('zoom_factor')
     x_pixel_to_micron_input.value = get_string('x_pixel_to_micron')
     y_pixel_to_micron_input.value = get_string('y_pixel_to_micron')
@@ -288,6 +309,8 @@ def select_image(attr, old, new):
     update_time_slider()
     update_plot()
     update_parameter_widgets()
+    n_frames = time_slider.end + 1
+    results_plot_source.data = dict(x=range(n_frames), y=[0] * n_frames)
     message_paragraph.style = {'color': 'green'}
     message_paragraph.text = 'Image successfully loaded!'
 
@@ -302,11 +325,6 @@ def update_frame(attr, old, new):
     if len(image.shape) is 3:
         try:
             image_source.data['image'] = [image[new, :, :]]
-            if roi_source.selected.indices:
-                roi_plot_source.data['image'] = [
-                    get_roi_data(roi_source.selected.indices[0],
-                                 time_slider.value)
-                ]
         except IndexError:
             print('Failed to update image frame!')
 
@@ -335,35 +353,72 @@ roi_source = ColumnDataSource(data={
     'height': [],
 })
 
-roi_plot_source = ColumnDataSource(data=dict(image=[], dw=[], dh=[]))
+results_plot_source = ColumnDataSource(data=dict(x=[], y=[]))
 
-roi_plot = create_roi_figure(roi_plot_source)
+results_plot = create_results_plot(results_plot_source)
+
+cross_correlation_plot_source = ColumnDataSource(
+    data=dict(
+        xs=[],
+        ys=[],
+        color=[],
+        alpha=[],
+    ))
+
+cross_correlation_plot = create_cross_correlation_plot(
+    cross_correlation_plot_source)
+
+
+def get_roi_vector(roi_index: int):
+    n_vectors = len(vector_source.data['xs'])
+    for vector_index in range(n_vectors):
+        x0, x1, y0, y1 = get_vector_params(vector_index)
+        x_start, x_end, y_start, y_end = get_roi_coordinates(roi_index)
+        if not any([x0 < x_start, x1 > x_end, y0 < y_start, y1 > y_end]):
+            return vector_index
 
 
 def change_selected_roi(attr, old, new):
     if new:
-        roi_index = new.indices[0]
+        roi_index = new[0]
         roi_data = get_roi_data(roi_index, time_slider.value)
-        roi_plot_source.data = dict(
-            image=[roi_data], dw=[roi_data.shape[1]], dh=[roi_data.shape[0]])
-        roi_plot.height = roi_data.shape[0] * 3
-        roi_plot.width = roi_data.shape[1] * 3
-        roi_plot.x_range.end = roi_data.shape[1]
-        roi_plot.y_range.end = roi_data.shape[0]
+        height, width = roi_data.shape[0], roi_data.shape[1]
+        roi_shape_input.value = f'{height}x{width}'
+        vector_index = get_roi_vector(roi_index)
+        if type(vector_index) is int:
+            vector_angle_input.value = f'{get_vector_angle_input(vector_index)}'
+            vector_source.selected.indices = [vector_index]
+            run_roi_button.disabled = False
+        else:
+            vector_source.selected.indices = []
+            vector_angle_input.value = config['null']
+            run_roi_button.disabled = True
+    else:
+        roi_shape_input.value = config['null']
+        vector_angle_input.value = config['null']
+        vector_source.selected.indices = []
+        run_roi_button.disabled = True
 
 
-roi_source.on_change('selected', change_selected_roi)
+roi_source.selected.on_change('indices', change_selected_roi)
 
 
-def get_roi_data(roi_index: int, frame: int):
+def get_roi_coordinates(roi_index: int):
     width = round(roi_source.data['width'][roi_index])
     height = round(roi_source.data['height'][roi_index])
     x_center = round(roi_source.data['x'][roi_index])
     y_center = round(roi_source.data['y'][roi_index])
-    x_start = x_center - width // 2
-    x_end = x_center + width // 2
-    y_start = y_center - height // 2
-    y_end = y_center + height // 2
+    x_start = int(x_center - width // 2)
+    x_end = int(x_center + width // 2)
+    x_start, x_end = sorted([x_start, x_end])
+    y_start = int(y_center - height // 2)
+    y_end = int(y_center + height // 2)
+    y_start, y_end = sorted([y_start, y_end])
+    return x_start, x_end, y_start, y_end
+
+
+def get_roi_data(roi_index: int, frame: int):
+    x_start, x_end, y_start, y_end = get_roi_coordinates(roi_index)
     return get_current_image()[frame, y_start:y_end, x_start:x_end]
 
 
@@ -400,22 +455,205 @@ def update_pixel_to_micron(attr, old, new):
 
 fov_input.on_change('value', update_pixel_to_micron)
 
-zoom_factor_input = TextInput(value='---', title='Zoom Factor')
+zoom_factor_input = TextInput(value=config['null'], title='Zoom Factor')
 zoom_factor_input.disabled = True
-columns_input = TextInput(value='---', title='Columns')
-columns_input.disabled = True
-rows_input = TextInput(value='---', title='Rows')
-rows_input.disabled = True
-x_pixel_to_micron_input = TextInput(value='---', title='Pixel to Micron (X)')
+image_shape_input = TextInput(value=config['null'], title='Image Shape')
+image_shape_input.disabled = True
+x_pixel_to_micron_input = TextInput(
+    value=config['null'], title='Pixel to Micron (X)')
 x_pixel_to_micron_input.disabled = True
-y_pixel_to_micron_input = TextInput(value='---', title='Pixel to Micron (Y)')
+y_pixel_to_micron_input = TextInput(
+    value=config['null'], title='Pixel to Micron (Y)')
 y_pixel_to_micron_input.disabled = True
-line_rate_input = TextInput(value='---', title='Line Rate')
-frame_rate_input = TextInput(value='---', title='Frame Rate')
+line_rate_input = TextInput(value=config['null'], title='Line Rate (Hz)')
+frame_rate_input = TextInput(value=config['null'], title='Frame Rate (Hz)')
+
+
+def validate_numbers(widget, attr, old, new):
+    try:
+        float(new)
+    except ValueError:
+        widget.value = old
+
+
+min_distance_input = TextInput(
+    value=config['min_distance'],
+    title='Starting Distance',
+)
+
+max_distance_input = TextInput(
+    value=config['max_distance'],
+    title='Maximum Distance',
+)
+
+distance_step_input = TextInput(
+    value=config['distance_step'],
+    title='Step',
+)
+
+roi_shape_input = TextInput(
+    value=config['null'],
+    title='ROI Shape',
+)
+roi_shape_input.disabled = True
+
+vector_angle_input = TextInput(
+    value=config['null'],
+    title='Vector Angle (Radians)',
+)
+vector_angle_input.disabled = True
+
+beam_waist_xy_input = TextInput(
+    value=config['beam_waist_xy'],
+    title='Beam Waist XY (m)',
+)
+beam_waist_xy_input.on_change(
+    'value',
+    partial(validate_numbers, beam_waist_xy_input),
+)
+
+beam_waist_z_input = TextInput(
+    value=config['beam_waist_z'],
+    title='Beam Waist Z (m)',
+)
+beam_waist_z_input.on_change(
+    'value',
+    partial(validate_numbers, beam_waist_z_input),
+)
+
+rbc_radius_input = TextInput(
+    value=config['rbc_radius'],
+    title='RBC Radius (m)',
+)
+rbc_radius_input.on_change(
+    'value',
+    partial(validate_numbers, rbc_radius_input),
+)
+
+tau_input = TextInput(
+    value=config['tau'],
+    title='Pixel Dwell Time [τ] (s)',
+)
+tau_input.on_change(
+    'value',
+    partial(validate_numbers, tau_input),
+)
+
+distance_sources = dict()
+
+
+def update_cross_correlation_plot(results: dict):
+    n_columns = len(list(results.values())[0])
+    cross_correlation_plot.x_range.end = n_columns
+    filtered_results = {
+        key: value
+        for key, value in results.items()
+        if isinstance(value, (np.ndarray, list))
+    }
+    for distance in filtered_results:
+        current_results = filtered_results[distance]
+        if distance not in distance_sources:
+            distance_index = list(results.keys()).index(distance)
+            color = Category20_20[distance_index % 20]
+            distance_sources[distance] = ColumnDataSource(
+                data=dict(
+                    x=range(len(current_results)),
+                    y=current_results,
+                ))
+            cross_correlation_plot.line(
+                x='x',
+                y='y',
+                color=color,
+                legend=str(distance),
+                source=distance_sources[distance],
+                name=f'distance_{distance}_line',
+            )
+        else:
+            distance_sources[distance].data['y'] = current_results
+            line = curdoc().get_model_by_name(f'distance_{distance}_line')
+            line.visible = True
+            line.glyph.line_alpha = 1
+    to_hide = [
+        distance for distance in distance_sources.keys()
+        if distance not in filtered_results
+    ]
+    for distance in to_hide:
+        distance_sources[distance].data.y = [0] * n_columns
+        line = curdoc().get_model_by_name(f'distance_{distance}_line')
+        line.visible = False
+        line.glyph.line_alpha = 0
+    cross_correlation_plot.legend.click_policy = 'hide'
+
+
+def run_flics_on_roi():
+    roi_index = roi_source.selected.indices[0]
+    n_frames = time_slider.end
+    cross_correlation_results = []
+    fitting_results = []
+    for i_frame in range(n_frames + 1):
+        time_slider.value = i_frame
+        analysis_status_paragraph.text = f'Retrieving ROI[{roi_index}] data for frame #{i_frame}...'
+        data = get_roi_data(roi_index, i_frame)
+        analysis_status_paragraph.text = 'Calculating column cross-correlation...'
+        flics_analysis = Analysis(
+            image=data,
+            min_distance=int(min_distance_input.value),
+            max_distance=int(max_distance_input.value) + 1,
+            distance_step=int(distance_step_input.value),
+        )
+        update_cross_correlation_plot(flics_analysis.results)
+        cross_correlation_results.append(list(flics_analysis.results.values()))
+        analysis_status_paragraph.text = 'Calculating global fit...'
+        global_fitting = GlobalFit(flics_analysis.results)
+        angle = float(vector_angle_input.value)
+        dx = float(x_pixel_to_micron_input.value) * 1e-6
+        frame_results = global_fitting.run(
+            angle=angle,
+            pixel_to_micron_x=dx,
+            beam_waist_xy=float(beam_waist_xy_input.value),
+            beam_waist_z=float(beam_waist_z_input.value),
+            rbc_radius=float(rbc_radius_input.value),
+            tau=float(tau_input.value),
+        )
+        v = frame_results.params['v_']
+        fitting_results.append(v)
+        analysis_status_paragraph.text = 'Updating plot with results...'
+        results_plot_source.data = dict(
+            x=range(i_frame + 1),
+            y=fitting_results,
+        )
+        results_plot.x_range.end = i_frame
+        results_plot.y_range.start = min(fitting_results)
+        results_plot.y_range.end = max(fitting_results)
+
+    import pickle
+    with open('cross_corr.bin', 'wb') as cross_corr_file:
+        pickle.dump(cross_correlation_results, cross_corr_file)
+    with open('fitting.bin', 'wb') as fitting_file:
+        pickle.dump(fitting_results, fitting_file)
+    db_path = get_db_path()
+    with xr.open_dataset(db_path) as db:
+        path = get_full_path(image_select.value)
+        fitting_results = (['time'], fitting_results)
+        cross_correlation_results = (['time', 'distance'],
+                                     cross_correlation_results)
+        # TODO: Needs to be associated with an ROI
+        db.loc[{
+            'path': path
+        }].assign(cross_correlation_results=cross_correlation_results)
+        db.loc[{'path': path}].assign(fitting_results=fitting_results)
+        os.remove(db_path)
+        db.to_netcdf(db_path, mode='w')
+
+
+run_roi_button = Button(label='Run ROI', button_type='primary')
+run_roi_button.disabled = True
+run_roi_button.on_click(run_flics_on_roi)
 
 run_flics_button = Button(label='Run FLICS', button_type='primary')
 
 message_paragraph = Paragraph(text='')
+analysis_status_paragraph = Paragraph(text='')
 
 
 def get_roi_params(index: int) -> list:
@@ -454,14 +692,13 @@ def get_vector_data_by_index() -> np.ndarray:
     return vector_data
 
 
-def get_vector_angle(index: int) -> float:
+def get_vector_angle_input(index: int) -> float:
     x0, x1, y0, y1 = get_vector_params(index)
     return math.atan2(y1 - y0, x1 - x0)
 
 
 def create_data_dict() -> dict:
     return {
-        '2d_projection': (['x', 'y'], calculate_2d_projection()),
         'line_rate': float(line_rate_input.value),
         'frame_rate': float(frame_rate_input.value),
         'roi_data': (['roi_num', 'roi_loc'], get_roi_data_by_index()),
@@ -483,37 +720,25 @@ def create_coords_dict(path: str) -> dict:
         'roi_loc': ['x', 'y', 'width', 'height'],
         'vector_num': np.arange(50, dtype=np.uint8),
         'vector_loc': ['x_start', 'x_end', 'y_start', 'y_end'],
+        'distance': np.arange(0, 301, 20)
     }
 
 
 def save():
     path = get_full_path(image_select.value)
     data_vars = create_data_dict()
+    coords = create_coords_dict(path)
+    ds = xr.Dataset(data_vars, coords)
     db_path = get_db_path()
     if os.path.isfile(db_path):
         with xr.open_dataset(db_path) as db:
             if path in db['path'].values:
-                print('trying to update DB for existing path')
-                for key, value in data_vars.items():
-                    if type(db['path'].values.tolist()) is not str:
-                        if db[key].loc[{
-                                'path': path
-                        }].values.tolist() != value:
-                            db[key].loc[{'path': path}] = value
-                    else:
-                        if db[key].values.tolist() != value:
-                            db[key] = value
-            else:
-                print('trying to update DB with new path')
-                coords = create_coords_dict(path)
-                ds = xr.Dataset(data_vars, coords)
-                db = xr.concat([db, ds], dim='path')
+                db = db.drop(path, dim='path')
+            db = xr.concat([db, ds], dim='path')
             os.remove(db_path)
-            db.to_netcdf(get_db_path(), mode='w')
+            db.to_netcdf(db_path, mode='w')
     else:
-        coords = create_coords_dict(path)
-        db = xr.Dataset(data_vars, coords)
-        db.to_netcdf(db_path)
+        ds.to_netcdf(db_path)
 
 
 save_button.on_click(save)
@@ -524,8 +749,7 @@ main_layout = row(
         image_select,
         message_paragraph,
         time_slider,
-        rows_input,
-        columns_input,
+        image_shape_input,
         zoom_factor_input,
         x_pixel_to_micron_input,
         y_pixel_to_micron_input,
@@ -534,10 +758,20 @@ main_layout = row(
         frame_rate_input,
         toggle_2d,
         save_button,
-        run_flics_button,
     ),
-    plot,
-    roi_plot,
+    column(
+        row(roi_shape_input, vector_angle_input),
+        plot,
+    ),
+    column(
+        row(beam_waist_xy_input, beam_waist_z_input),
+        row(rbc_radius_input, tau_input),
+        results_plot,
+        row(min_distance_input, max_distance_input, distance_step_input),
+        cross_correlation_plot,
+        analysis_status_paragraph,
+        run_roi_button,
+    ),
     name='main_layout',
 )
 

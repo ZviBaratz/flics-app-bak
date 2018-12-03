@@ -16,6 +16,9 @@ tifffile = "==0.15.1"
 scipy = "*"
 "h5py" = "*"
 "netcdf4" = "*"
+symfit = "*"
+mpmath = "*"
+sympy = "*"
 
 [dev-packages]
 yapf = "*"

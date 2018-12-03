@@ -35,4 +35,4 @@ htmlcov
 
 
 # DB file
-*.nc
+**.nc

@@ -77,6 +77,7 @@ def create_image_figure(
         PolyDrawTool(renderers=[lines]),
         PolyEditTool(renderers=[lines], vertex_renderer=circles),
     ]
+    plot.toolbar.active_inspect = []
 
     return plot
 
