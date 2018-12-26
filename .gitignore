@@ -33,6 +33,5 @@ static/
 # Coverage reports
 htmlcov
 
-
 # DB file
 **.nc
