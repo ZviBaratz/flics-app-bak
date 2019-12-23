@@ -7,18 +7,17 @@ class GlobalFit:
         self.data = data
 
     def create_distance_strings(self, prefix: str):
-        return ', '.join(
-            f'{prefix}_{distance}' for distance in self.data.keys())
+        return ', '.join(f'{prefix}_{distance}' for distance in self.data.keys())
 
     def run(
             self,
             angle=0.02472,
-            pixel_to_micron_x=9.81e-8,
-            beam_waist_xy=0.5e-6,
+            pixel_to_micron_x=0.03651,
+            beam_waist_xy=0.2,
             beam_waist_z=2e-6,
-            rbc_radius=4e-6,
+            rbc_radius=6.2666,
             s=1,
-            tau=0.001,
+            tau_line=0.001,
     ):
         # create parameters for symfit
         distances = self.data.keys()
@@ -42,15 +41,17 @@ class GlobalFit:
         # create model
         # pixel_to_micron_x
         model = sf.Model({
-            y:
-            y0 + b * sf.exp(-(dst * pixel_to_micron_x - v * (sf.cos(angle)) * x)**2 / (beam_waist_xy + 0.5 * rbc_radius**2 + 4 * d * x)) * sf.exp(-(x**2) * (v * sf.sin(angle) - pixel_to_micron_x / tau)**2 / (beam_waist_xy + 0.5 * rbc_radius**2 + angle * d * x)) / (4 * d * x + beam_waist_xy + 0.5 * rbc_radius**2)
+            y: y0 + b * sf.exp(-(dst * pixel_to_micron_x - v * (sf.cos(angle)) * x)**2 /
+            (beam_waist_xy**2 + 0.5 * rbc_radius**2 * s + 4 * d * x * s)) *
+            sf.exp(-(x**2) * (pixel_to_micron_x / tau_line - v * sf.sin(angle))**2 /
+            (beam_waist_xy**2 + 0.5 * s * rbc_radius**2 + 4 * s * d * x))
             for y, y0, b, dst in zip(y_var, y0_p, b_p, distances)
         })
         # dependent variables dict
         data = {y.name: self.data[dst] for y, dst in zip(y_var, distances)}
         # independent variable x
         n_data_points = len(list(self.data.values())[0])
-        max_time = n_data_points * tau
+        max_time = n_data_points * tau_line
         x_data = np.linspace(0, max_time, n_data_points)
         # fit
         fit = sf.Fit(model, x=x_data, **data)

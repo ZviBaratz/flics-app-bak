@@ -1,11 +1,14 @@
 import math
 import numpy as np
 import os
+import pathlib
 import tifffile
 import xarray as xr
 
-from analysis.flics import Analysis
-from analysis.global_fit import GlobalFit
+from app.schema import connect_to_db, Data, get_column_image_db, check_col_image_exist_in_db, delete_row_in_db
+
+from app.analysis.flics import Analysis
+from app.analysis.global_fit import GlobalFit
 from bokeh.io import curdoc
 from bokeh.layouts import column, row, widgetbox
 from bokeh.models import ColumnDataSource
@@ -18,18 +21,18 @@ from bokeh.models.widgets import (
     Toggle,
 )
 from bokeh.palettes import Category20_20
-from figures.image_plot import create_image_figure
-from figures.results_plot import (
+from app.figures.image_plot import create_image_figure
+from app.figures.results_plot import (
     create_results_plot,
     create_cross_correlation_plot,
 )
 from functools import partial
 
-base_dir_input = TextInput(value='Enter path...', title='Base Directory')
+base_dir_input = TextInput(value=r'd:\git\flics\flics_data\\', title='Base Directory')
 IMAGE_EXT = '.tif'
 
 config = {
-    'null': '---',
+    'null': '0',
     'beam_waist_xy': '0.5e-6',
     'beam_waist_z': '2e-6',
     'rbc_radius': '4e-6',
@@ -58,7 +61,7 @@ def get_file_paths(ext: str = IMAGE_EXT) -> list:
     return image_paths
 
 
-def update_image_select(attr, old, new):
+def update_image_select(attr, old, new): #called when user changes basedir or image
     if os.path.isdir(new):
         image_paths = get_file_paths()
         relative_paths = [path[len(new):] for path in image_paths]
@@ -69,16 +72,17 @@ def update_image_select(attr, old, new):
     image_select.options = [config['null']]
 
 
-def get_db_path() -> str:
-    if os.path.isdir(base_dir_input.value):
-        return os.path.join(base_dir_input.value, 'db.nc')
-
-
-def read_db() -> xr.Dataset:
-    try:
-        return xr.open_dataset(get_db_path())
-    except FileNotFoundError:
-        return xr.Dataset()
+def get_db_path() -> pathlib.Path:
+    """
+    Asserts that the user supplied a valid directory,
+    and if so returns the possible name of the database
+    which should be located inside that directory.
+    Note: The database might not exist yet.
+    :return: pathlib.Path - path to database file
+    """
+    data_folder = pathlib.Path(base_dir_input.value)
+    if data_folder.is_dir():
+        return data_folder / 'db.db'
 
 
 base_dir_input.on_change('value', update_image_select)
@@ -120,7 +124,13 @@ def read_image_file(path: str) -> np.ndarray:
 
 
 def get_current_image() -> np.ndarray:
-    return raw_source.data['image'][0]
+    img = raw_source.data['image'][0]
+    if img.ndim == 2:
+        return img[np.newaxis, :]
+    elif img.ndim == 3:
+        return img
+    else:
+        raise ValueError(f"Image dimension mismatch. Number of dimensions: {img.ndim}")
 
 
 def get_current_metadata() -> dict:
@@ -153,15 +163,23 @@ def update_plot_axes(width: int, height: int) -> None:
     plot.y_range.end = height
 
 
-def draw_existing_rois(db: xr.Dataset) -> None:
-    path = get_full_path(image_select.value)
-    if type(db['path'].values.tolist()) is not str:
-        roi_data = np.asarray(db['roi_data'].loc[{
-            'path': path
-        }].values.tolist())
-    else:
-        roi_data = np.asarray(db['roi_data'].values.tolist())
-    roi_data = roi_data[~np.isnan(roi_data).any(axis=1)]
+def update_plot() -> None:
+    frame = get_current_frame()
+    width, height = frame.shape[1], frame.shape[0]
+    image_source.data = dict(image=[frame], dw=[width], dh=[height])
+    update_plot_axes(width, height)
+    db_path = get_db_path()
+    if os.path.isfile(db_path):
+        draw_existing_rois()
+        draw_existing_vectors()
+        return
+    roi_source.data = dict(x=[], y=[], width=[], height=[])
+    vector_source.data = dict(xs=[], ys=[])
+
+
+def draw_existing_rois() -> None:
+    image_full_path = get_full_path(image_select.value)
+    roi_data = get_column_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
     x = []
     y = []
     width = []
@@ -174,38 +192,15 @@ def draw_existing_rois(db: xr.Dataset) -> None:
     roi_source.data = dict(x=x, y=y, width=width, height=height)
 
 
-def draw_existing_vectors(db: xr.Dataset) -> None:
-    path = get_full_path(image_select.value)
-    if type(db['path'].values.tolist()) is not str:
-        vector_data = np.asarray(db['vector_data'].loc[{
-            'path': path
-        }].values.tolist())
-    else:
-        vector_data = np.asarray(db['vector_data'].values.tolist())
-    vector_data = vector_data[~np.isnan(vector_data).any(axis=1)]
+def draw_existing_vectors() -> None:
+    image_full_path = get_full_path(image_select.value)
+    vector_data = get_column_image_db(get_db_path(), image_full_path, 'vector_loc', 'float')
     xs = []
     ys = []
     for vector in vector_data:
         xs.append([vector[0], vector[1]])
         ys.append([vector[2], vector[3]])
     vector_source.data = dict(xs=xs, ys=ys)
-
-
-def update_plot() -> None:
-    frame = get_current_frame()
-    width, height = frame.shape[1], frame.shape[0]
-    image_source.data = dict(image=[frame], dw=[width], dh=[height])
-    update_plot_axes(width, height)
-    path = get_full_path(image_select.value)
-    db_path = get_db_path()
-    if os.path.isfile(db_path):
-        with xr.open_dataset(db_path) as db:
-            if 'path' in db and path in db['path'].values:
-                draw_existing_rois(db)
-                draw_existing_vectors(db)
-                return
-    roi_source.data = dict(x=[], y=[], width=[], height=[])
-    vector_source.data = dict(xs=[], ys=[])
 
 
 def read_metadata(path: str) -> dict:
@@ -298,7 +293,7 @@ def update_parameter_widgets() -> None:
     y_pixel_to_micron_input.value = get_string('y_pixel_to_micron')
 
 
-def select_image(attr, old, new):
+def select_image(attr, old, new): # read from db prev data and metadata of image if exists
     message_paragraph.style = {'color': 'orange'}
     message_paragraph.text = 'Loading...'
     path = get_full_path(new)
@@ -632,7 +627,7 @@ def run_flics_on_roi():
     with open('fitting.bin', 'wb') as fitting_file:
         pickle.dump(fitting_results, fitting_file)
     db_path = get_db_path()
-    with xr.open_dataset(db_path) as db:
+    with xr.open_dataset(db_path) as db: ### reut
         path = get_full_path(image_select.value)
         fitting_results = (['time'], fitting_results)
         cross_correlation_results = (['time', 'distance'],
@@ -656,32 +651,24 @@ message_paragraph = Paragraph(text='')
 analysis_status_paragraph = Paragraph(text='')
 
 
-def get_roi_params(index: int) -> list:
+def get_roi_params(index: int) -> np.array:
     values = roi_source.data
-    return [
+    return np.array([
         values['x'][index],
         values['y'][index],
         values['width'][index],
-        values['height'][index],
-    ]
+        values['height'][index]
+    ])
 
 
-def get_vector_params(index: int) -> list:
+def get_vector_params(index: int) -> np.array:
     values = vector_source.data
-    return [
+    return np.array([
         values['xs'][index][0],
         values['xs'][index][1],
         values['ys'][index][0],
-        values['ys'][index][1],
-    ]
-
-
-def get_roi_data_by_index() -> np.ndarray:
-    roi_data = np.full((50, 4), np.nan)
-    n_rois = len(roi_source.data['x'])
-    for index in range(n_rois):
-        roi_data[index, :] = get_roi_params(index)
-    return roi_data
+        values['ys'][index][1]
+    ])
 
 
 def get_vector_data_by_index() -> np.ndarray:
@@ -697,48 +684,93 @@ def get_vector_angle_input(index: int) -> float:
     return math.atan2(y1 - y0, x1 - x0)
 
 
-def create_data_dict() -> dict:
+def create_data_dict(roi_index: int) -> dict:
     return {
-        'line_rate': float(line_rate_input.value),
+        'path': get_full_path(image_select.value),
         'frame_rate': float(frame_rate_input.value),
-        'roi_data': (['roi_num', 'roi_loc'], get_roi_data_by_index()),
-        'vector_data': (['vector_num', 'vector_loc'],
-                        get_vector_data_by_index()),
+        'line_rate': float(line_rate_input.value),
+        'x_pixel_to_micron': float(calc_x_pixel_to_micron()),
+        'y_pixel_to_micron': float(calc_y_pixel_to_micron()),
+        '_2d_projection': calculate_2d_projection(),
+        'corr_calc_config': 0,
+        'corr_analysis_state': 0,
+        'correlation_results':  np.array([0, 1, 2, 3]),
+        'fitting_params': 0,
+        'fitting_analysis_state': 0,
+        'fitting_results': np.array([34, 34, 2322]),
+        'vessel_diameters': np.array([[404040, 32323], [30232, 23232]]),
         'corr_calc_state': 0,
         'fitting_state': 0,
+        'roi_coordinates': get_roi_params(roi_index),
+        'vector_loc': get_vector_params(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
+        'distance': np.arange(0, 301, 20),
+        'step': 0,
+        'delete_row': False
     }
 
 
 def create_coords_dict(path: str) -> dict:
     image = get_current_image()
     return {
-        'path': path,
-        'pix_x': np.arange(image.shape[2]),
-        'pix_y': np.arange(image.shape[1]),
-        'time': np.arange(image.shape[0]),
-        'roi_num': np.arange(50, dtype=np.uint8),
-        'roi_loc': ['x', 'y', 'width', 'height'],
-        'vector_num': np.arange(50, dtype=np.uint8),
-        'vector_loc': ['x_start', 'x_end', 'y_start', 'y_end'],
-        'distance': np.arange(0, 301, 20)
+        #'pix_x': np.arange(image.shape[2]),
+        #'pix_y': np.arange(image.shape[1]),
+        #'time': np.arange(image.shape[0]),
+        #'distance': np.arange(0, 301, 20)
     }
 
 
 def save():
-    path = get_full_path(image_select.value)
-    data_vars = create_data_dict()
-    coords = create_coords_dict(path)
-    ds = xr.Dataset(data_vars, coords)
-    db_path = get_db_path()
-    if os.path.isfile(db_path):
-        with xr.open_dataset(db_path) as db:
-            if path in db['path'].values:
-                db = db.drop(path, dim='path')
-            db = xr.concat([db, ds], dim='path')
-            os.remove(db_path)
-            db.to_netcdf(db_path, mode='w')
-    else:
-        ds.to_netcdf(db_path)
+    session = connect_to_db(get_db_path(), False)
+    add_image_to_db(session)
+
+
+def add_image_to_db(session):
+    #this function is called after an image and its rois are choosen
+    #we add each roi as a line to the db
+    n_rois_current = len(roi_source.data['x'])
+    image_full_path = get_full_path(image_select.value)
+    handle_rois_added_by_user(n_rois_current, session, image_full_path)
+    handle_rois_deleted_by_user(session, n_rois_current, image_full_path)
+
+
+def handle_rois_added_by_user(n_rois_current: int, session, image_full_path: str):
+    """"
+    go over list of rois per image recieved from user
+    check for every roi if exists in DB
+    add only non existing rois to db
+    """
+    for roi_index in range(n_rois_current):
+        roi_exist = check_col_image_exist_in_db(get_db_path(), image_full_path, 'roi_coordinates', get_roi_params(roi_index), 'float')
+        if not roi_exist:
+            add_new_roi_to_db(roi_index, session)
+
+
+def handle_rois_deleted_by_user(session, n_rois_current: int, image_full_path: str):
+    #go over list of rois in DB, check for each roi if exists
+    #if roi exists in db but not in image_source then delete it from the db
+    roi_db_list = get_column_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
+    for roi_db in roi_db_list:
+        roi_db_parsed = np.frombuffer(roi_db, dtype=np.float)
+        delete_roi_from_db = True
+        for roi_index in range(n_rois_current):
+            if np.allclose(roi_db_parsed, get_roi_params(roi_index)):
+                delete_roi_from_db = False
+        if delete_roi_from_db:
+            delete_row_in_db(session, image_full_path, np.array(roi_db))
+
+
+def add_new_roi_to_db(roi_index: int, session):
+    data_vars, coords = get_parameters(roi_index)
+    data = Data(**data_vars)
+    session.add(data)
+    session.commit()
+
+
+def get_parameters(roi_index: int):
+    image_path = get_full_path(image_select.value)
+    data_vars = create_data_dict(roi_index)
+    coords = create_coords_dict(image_path)
+    return data_vars, coords
 
 
 save_button.on_click(save)
