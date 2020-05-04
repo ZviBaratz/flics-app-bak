@@ -4,6 +4,7 @@ import PIL.Image
 import scipy
 import scipy.fftpack
 from PIL.TiffImagePlugin import TiffImageFile
+from app.analysis.global_fit import *
 
 # from .tests.old_results_parser import parse_old_results
 
@@ -27,7 +28,7 @@ class Analysis:
         :type image: np.ndarray
         :param image_path: .tif image file path.
         :type image_path: str
-        :param threshold: Threshold to applied to the image, defaults to None.
+        :param threshold: Threshold to be applied to the image, defaults to None.
         :param threshold: float, optional
         :param max_distance: Maximum column-pair distance to be calculated,
         defaults to 320.
@@ -129,14 +130,12 @@ class Analysis:
         distant_column_transform = self.calc_fft(i_column + distance)
         distant_column_transform = np.ma.conjugate(distant_column_transform)
 
-        inverse = scipy.fftpack.ifft(
-            distant_column_transform * column_transform)
+        inverse = scipy.fftpack.ifft(distant_column_transform * column_transform)
         if type(self.image) is TiffImageFile:
             height = self.image.height
         else:
             height = self.image.shape[0]
-        divider = (self.column_means[i_column] *
-                   self.column_means[i_column + distance] * height)
+        divider = (self.column_means[i_column] * self.column_means[i_column + distance] * height)
         crosscorr = np.real(inverse / divider)
         return crosscorr
 
@@ -208,3 +207,34 @@ class Analysis:
     #             ),
     #             ax.legend()
     #     plt.show(block=False)
+
+
+if __name__ == '__main__':
+    analysis = Analysis(None, r'd:\git\flics\flics_data\Angoli_vena_conventional_Series012t5_6gradi.tif', None, 0, 320, 20, True)
+    global_fit = GlobalFit(analysis.results)
+    global_fit_res = global_fit.run()
+    print(global_fit_res)
+"""
+#check_results:
+    match_indxs = []
+    no_match_indxs = []
+    for index in analysis.results:
+        filename = r'D:\git\flics\flics_data\correlation%sleftright.txt' %(index)
+        f = open(filename, 'r')
+        for i in range(51):
+            val_file = np.array(float(f.readline().split(',')[1]))
+            val_anals = np.array(analysis.results[index][i])
+            if np.allclose(val_file, val_anals):
+                if index not in match_indxs:
+                    match_indxs.append(index)
+                print('match, index = ', index, 'i=',i)
+            else:
+                for j in range(51,1025):
+                    val_anals = np.array(analysis.results[index][i])
+                    if np.allclose(val_file, val_anals):
+                        print('originally match not found, match found between indexes:', i, j)
+                if index not in no_match_indxs:
+                    no_match_indxs.append(index)
+                print('no match for index:', index, 'i =', i, 'val_file=', val_file,'val_anals=', val_anals, 'val_file/val_anals=', val_file/val_anals)
+    print('matching indexes:', match_indxs, 'not matching:', no_match_indxs)
+"""

@@ -1,15 +1,10 @@
 import math
-import numpy as np
 import os
 import pathlib
-import tifffile
-import xarray as xr
-
-from app.schema import connect_to_db, Data, get_column_image_db, check_col_image_exist_in_db, delete_row_in_db
-
-from app.analysis.flics import Analysis
-from app.analysis.global_fit import GlobalFit
-from bokeh.io import curdoc
+from functools import partial
+from schema import *
+from file_handling import *
+from bokeh.plotting import curdoc
 from bokeh.layouts import column, row, widgetbox
 from bokeh.models import ColumnDataSource
 from bokeh.models.widgets import (
@@ -26,10 +21,8 @@ from app.figures.results_plot import (
     create_results_plot,
     create_cross_correlation_plot,
 )
-from functools import partial
 
-base_dir_input = TextInput(value=r'd:\git\flics\flics_data\\', title='Base Directory')
-IMAGE_EXT = '.tif'
+base_dir_input = TextInput(value=r'd:\git\latest\flics\flics_data\\', title='Base Directory')
 
 config = {
     'null': '0',
@@ -41,29 +34,24 @@ config = {
     'min_distance': '0',
     'max_distance': '300',
     'distance_step': '20',
+    'distance_step_limit': '50',
 }
 
 
-def get_file_paths(ext: str = IMAGE_EXT) -> list:
+def update_base_dir_select(attr, old, new: str):
     """
-    Returns a list of files ending with 'ext' within a directory tree.
-    
-    :param ext: The target file extension, defaults to IMAGE_EXT.
-    :type ext: str
-    :return: A list of file paths.
-    :rtype: list
+    called when user changes basedir
+
+    adds the image's file path to a bokeh
+
+    :param attr: part of function signature , not used
+    :param old: part of function signature , not used
+    :param new: new base_dir value
+    :type new: str
+    :return: None
     """
-    image_paths = []
-    for root, dirs, files in os.walk(base_dir_input.value):
-        for f in files:
-            if f.endswith(ext):
-                image_paths.append(os.path.join(root, f))
-    return image_paths
-
-
-def update_image_select(attr, old, new): #called when user changes basedir or image
     if os.path.isdir(new):
-        image_paths = get_file_paths()
+        image_paths = get_file_paths(base_dir_input.value)
         relative_paths = [path[len(new):] for path in image_paths]
         if relative_paths:
             image_select.options = relative_paths
@@ -82,10 +70,11 @@ def get_db_path() -> pathlib.Path:
     """
     data_folder = pathlib.Path(base_dir_input.value)
     if data_folder.is_dir():
+        print('db_path is:', data_folder / 'db.db')
         return data_folder / 'db.db'
 
 
-base_dir_input.on_change('value', update_image_select)
+base_dir_input.on_change('value', update_base_dir_select)
 
 raw_source = ColumnDataSource(data=dict(image=[], meta=[]))
 
@@ -94,7 +83,12 @@ image_select = Select(
 
 
 def get_full_path(relative_path: str) -> str:
-    image_paths = get_file_paths()
+    """
+
+    :param relative_path:
+    :return:
+    """
+    image_paths = get_file_paths(base_dir_input.value)
     try:
         return [f for f in image_paths if f.endswith(relative_path)][0]
     except IndexError:
@@ -109,30 +103,6 @@ def get_current_file_name() -> str:
     return os.path.basename(image_select.value).split('.')[0]
 
 
-def get_current_metset_path() -> str:
-    location = os.path.dirname(get_current_file_path())
-    return os.path.join(location, get_current_file_name() + '.nc')
-
-
-def read_image_file(path: str) -> np.ndarray:
-    with tifffile.TiffFile(path, movie=True) as f:
-        try:
-            data = f.asarray(slice(1, None, 2))  # read the second channel only
-        except ValueError:
-            data = f.asarray()
-        return data
-
-
-def get_current_image() -> np.ndarray:
-    img = raw_source.data['image'][0]
-    if img.ndim == 2:
-        return img[np.newaxis, :]
-    elif img.ndim == 3:
-        return img
-    else:
-        raise ValueError(f"Image dimension mismatch. Number of dimensions: {img.ndim}")
-
-
 def get_current_metadata() -> dict:
     try:
         return raw_source.data['meta'][0]
@@ -141,7 +111,7 @@ def get_current_metadata() -> dict:
 
 
 def update_time_slider() -> None:
-    image = get_current_image()
+    image = get_current_image(get_full_path(image_select.value))
     if len(image.shape) is 3:
         time_slider.end = image.shape[0] - 1
         time_slider.disabled = False
@@ -152,7 +122,7 @@ def update_time_slider() -> None:
 
 
 def get_current_frame() -> np.ndarray:
-    image = get_current_image()
+    image = get_current_image(get_full_path(image_select.value))
     if len(image.shape) is 3:
         return image[time_slider.value, :, :]
     return image
@@ -179,7 +149,8 @@ def update_plot() -> None:
 
 def draw_existing_rois() -> None:
     image_full_path = get_full_path(image_select.value)
-    roi_data = get_column_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
+    print('image_full_path is:', image_full_path)
+    roi_data = get_all_field_in_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
     x = []
     y = []
     width = []
@@ -194,18 +165,13 @@ def draw_existing_rois() -> None:
 
 def draw_existing_vectors() -> None:
     image_full_path = get_full_path(image_select.value)
-    vector_data = get_column_image_db(get_db_path(), image_full_path, 'vector_loc', 'float')
+    vector_data = get_all_field_in_image_db(get_db_path(), image_full_path, 'vector_loc', 'float')
     xs = []
     ys = []
     for vector in vector_data:
         xs.append([vector[0], vector[1]])
         ys.append([vector[2], vector[3]])
     vector_source.data = dict(xs=xs, ys=ys)
-
-
-def read_metadata(path: str) -> dict:
-    with tifffile.TiffFile(path, movie=True) as f:
-        return f.scanimage_metadata
 
 
 def get_frame_rate() -> float:
@@ -304,8 +270,7 @@ def select_image(attr, old, new): # read from db prev data and metadata of image
     update_time_slider()
     update_plot()
     update_parameter_widgets()
-    n_frames = time_slider.end + 1
-    results_plot_source.data = dict(x=range(n_frames), y=[0] * n_frames)
+    #update_res_graph()
     message_paragraph.style = {'color': 'green'}
     message_paragraph.text = 'Image successfully loaded!'
 
@@ -316,7 +281,7 @@ time_slider = Slider(start=0, end=1, value=0, step=1, title='Time')
 
 
 def update_frame(attr, old, new):
-    image = get_current_image()
+    image = get_current_image(get_full_path(image_select.value))
     if len(image.shape) is 3:
         try:
             image_source.data['image'] = [image[new, :, :]]
@@ -325,7 +290,7 @@ def update_frame(attr, old, new):
 
 
 def calculate_2d_projection() -> np.ndarray:
-    image = get_current_image()
+    image = get_current_image(get_full_path(image_select.value))
     if len(image.shape) is 3:
         return np.max(image, axis=0)
 
@@ -347,21 +312,12 @@ roi_source = ColumnDataSource(data={
     'width': [],
     'height': [],
 })
-
+data_xcorr = {}
 results_plot_source = ColumnDataSource(data=dict(x=[], y=[]))
+cross_correlation_plot_source = ColumnDataSource(data=dict(x=[]))
 
 results_plot = create_results_plot(results_plot_source)
-
-cross_correlation_plot_source = ColumnDataSource(
-    data=dict(
-        xs=[],
-        ys=[],
-        color=[],
-        alpha=[],
-    ))
-
-cross_correlation_plot = create_cross_correlation_plot(
-    cross_correlation_plot_source)
+cross_correlation_plot = create_cross_correlation_plot(cross_correlation_plot_source)
 
 
 def get_roi_vector(roi_index: int):
@@ -373,7 +329,7 @@ def get_roi_vector(roi_index: int):
             return vector_index
 
 
-def change_selected_roi(attr, old, new):
+def change_selected_roi(attr: str, old: str, new: str):
     if new:
         roi_index = new[0]
         roi_data = get_roi_data(roi_index, time_slider.value)
@@ -383,16 +339,16 @@ def change_selected_roi(attr, old, new):
         if type(vector_index) is int:
             vector_angle_input.value = f'{get_vector_angle_input(vector_index)}'
             vector_source.selected.indices = [vector_index]
-            run_roi_button.disabled = False
+            #run_roi_button.disabled = False
         else:
             vector_source.selected.indices = []
             vector_angle_input.value = config['null']
-            run_roi_button.disabled = True
+            #run_roi_button.disabled = True
     else:
         roi_shape_input.value = config['null']
         vector_angle_input.value = config['null']
         vector_source.selected.indices = []
-        run_roi_button.disabled = True
+        #run_roi_button.disabled = True
 
 
 roi_source.selected.on_change('indices', change_selected_roi)
@@ -414,7 +370,7 @@ def get_roi_coordinates(roi_index: int):
 
 def get_roi_data(roi_index: int, frame: int):
     x_start, x_end, y_start, y_end = get_roi_coordinates(roi_index)
-    return get_current_image()[frame, y_start:y_end, x_start:x_end]
+    return get_current_image(get_full_path(image_select.value))[frame, y_start:y_end, x_start:x_end]
 
 
 vector_source = ColumnDataSource(data={
@@ -486,6 +442,11 @@ distance_step_input = TextInput(
     title='Step',
 )
 
+distance_step_limit_input = TextInput(
+    value=config['distance_step_limit'],
+    title='Step Limit',
+)
+
 roi_shape_input = TextInput(
     value=config['null'],
     title='ROI Shape',
@@ -538,6 +499,7 @@ distance_sources = dict()
 
 
 def update_cross_correlation_plot(results: dict):
+    print('update_cross_correlation_plot func called')
     n_columns = len(list(results.values())[0])
     cross_correlation_plot.x_range.end = n_columns
     filtered_results = {
@@ -580,70 +542,52 @@ def update_cross_correlation_plot(results: dict):
     cross_correlation_plot.legend.click_policy = 'hide'
 
 
-def run_flics_on_roi():
-    roi_index = roi_source.selected.indices[0]
+def update_res_graph_roi(roi):
+    print('update_res_graph_roi')
     n_frames = time_slider.end
-    cross_correlation_results = []
-    fitting_results = []
-    for i_frame in range(n_frames + 1):
-        time_slider.value = i_frame
-        analysis_status_paragraph.text = f'Retrieving ROI[{roi_index}] data for frame #{i_frame}...'
-        data = get_roi_data(roi_index, i_frame)
-        analysis_status_paragraph.text = 'Calculating column cross-correlation...'
-        flics_analysis = Analysis(
-            image=data,
-            min_distance=int(min_distance_input.value),
-            max_distance=int(max_distance_input.value) + 1,
-            distance_step=int(distance_step_input.value),
-        )
-        update_cross_correlation_plot(flics_analysis.results)
-        cross_correlation_results.append(list(flics_analysis.results.values()))
-        analysis_status_paragraph.text = 'Calculating global fit...'
-        global_fitting = GlobalFit(flics_analysis.results)
-        angle = float(vector_angle_input.value)
-        dx = float(x_pixel_to_micron_input.value) * 1e-6
-        frame_results = global_fitting.run(
-            angle=angle,
-            pixel_to_micron_x=dx,
-            beam_waist_xy=float(beam_waist_xy_input.value),
-            beam_waist_z=float(beam_waist_z_input.value),
-            rbc_radius=float(rbc_radius_input.value),
-            tau=float(tau_input.value),
-        )
-        v = frame_results.params['v_']
-        fitting_results.append(v)
-        analysis_status_paragraph.text = 'Updating plot with results...'
-        results_plot_source.data = dict(
-            x=range(i_frame + 1),
-            y=fitting_results,
-        )
-        results_plot.x_range.end = i_frame
-        results_plot.y_range.start = min(fitting_results)
-        results_plot.y_range.end = max(fitting_results)
+    analysis_status_paragraph.text = 'Updating plot with results...'
+    fitting_results = get_field_in_roi_image_db(get_db_path(), get_full_path(image_select.value), roi , 'fitting_results', 'int')
+    print('fitting_results=', fitting_results)
+    x = np.linspace(1, n_frames+2, n_frames+1)
+    data = {
+        'x_values': x,
+        'y_values': fitting_results}
+    source = ColumnDataSource(data=data)
+    results_plot.circle(x='x_values', y='y_values', source=source)
 
-    import pickle
-    with open('cross_corr.bin', 'wb') as cross_corr_file:
-        pickle.dump(cross_correlation_results, cross_corr_file)
-    with open('fitting.bin', 'wb') as fitting_file:
-        pickle.dump(fitting_results, fitting_file)
+
+def is_res_ready(roi: np.array) -> bool:
+    print('is_res_ready called. roi = ', roi)
     db_path = get_db_path()
-    with xr.open_dataset(db_path) as db: ### reut
-        path = get_full_path(image_select.value)
-        fitting_results = (['time'], fitting_results)
-        cross_correlation_results = (['time', 'distance'],
-                                     cross_correlation_results)
-        # TODO: Needs to be associated with an ROI
-        db.loc[{
-            'path': path
-        }].assign(cross_correlation_results=cross_correlation_results)
-        db.loc[{'path': path}].assign(fitting_results=fitting_results)
-        os.remove(db_path)
-        db.to_netcdf(db_path, mode='w')
+    if os.path.isfile(db_path):
+        fitting_state = get_field_in_roi_image_db(get_db_path(), get_full_path(image_select.value), roi, 'fitting_state', 'int')
+        print('is_res_ready. fitting_state=', fitting_state)
+        if fitting_state == 1:
+            print('is_res_ready returns True. fitting_state=1 (=Done)')
+            return True
+    print('is_res_ready returns False. fitting_state!=1')
+    return False
 
 
-run_roi_button = Button(label='Run ROI', button_type='primary')
-run_roi_button.disabled = True
-run_roi_button.on_click(run_flics_on_roi)
+def update_res_graph():
+    n_rois_current = len(roi_source.data['x'])
+    print('update_res_graph called. n_rois_current=', n_rois_current)
+    if n_rois_current == 1: #the user selected one roi in the image
+        print('update_res_graph. n_rois_current=1')
+        roi = get_roi_params(0)
+        if is_res_ready(roi):
+            print('update_res_graph. roi=', roi, 'result is ready')
+            update_res_graph_roi(roi)
+    if n_rois_current > 1: #the user selected multiple rois in the image
+        print('update_res_graph. n_rois_current>1')
+        analysis_status_paragraph.text = 'To display results select a single ROI'
+    print('update_res_graph done')
+    #todo: continue  - how is it showen when the user selects a single roi?
+    # run update_res_graph_roi(with this roi), maybe we will use run_roi_button a gain
+
+#run_roi_button = Button(label='Run ROI', button_type='primary')
+#run_roi_button.disabled = False
+#run_roi_button.on_click(run_flics_on_roi)
 
 run_flics_button = Button(label='Run FLICS', button_type='primary')
 
@@ -691,26 +635,29 @@ def create_data_dict(roi_index: int) -> dict:
         'line_rate': float(line_rate_input.value),
         'x_pixel_to_micron': float(calc_x_pixel_to_micron()),
         'y_pixel_to_micron': float(calc_y_pixel_to_micron()),
+        'n_frames': int(time_slider.end),
+        'min_distance': int(min_distance_input.value),
+        'max_distance': (int(max_distance_input.value) + 1),
+        'distance_step': int(distance_step_input.value),
+        'distance_step_limit': int(distance_step_limit_input.value),
+        'vector_angle': get_vector_angle_input(roi_index),
         '_2d_projection': calculate_2d_projection(),
         'corr_calc_config': 0,
         'corr_analysis_state': 0,
-        'correlation_results':  np.array([0, 1, 2, 3]),
+        'correlation_results': np.zeros((50,516)), #dict() keys: 0-50, values: array of xcor results
         'fitting_params': 0,
         'fitting_analysis_state': 0,
-        'fitting_results': np.array([34, 34, 2322]),
-        'vessel_diameters': np.array([[404040, 32323], [30232, 23232]]),
+        'fitting_results': 5, #np.zeros((50,516)), #np.array([34, 34, 2322]),
+        'vessel_diameters': np.zeros(50), #np.array([[404040, 32323], [30232, 23232]]),
         'corr_calc_state': 0,
-        'fitting_state': 0,
-        'roi_coordinates': get_roi_params(roi_index),
+        'fitting_state': 1, #1= ready for backend processing . 2= processing. 3= processing done. 0 = processing error
+        'roi_coordinates': get_roi_coordinates(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
         'vector_loc': get_vector_params(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
-        'distance': np.arange(0, 301, 20),
-        'step': 0,
-        'delete_row': False
     }
 
 
 def create_coords_dict(path: str) -> dict:
-    image = get_current_image()
+    image = get_current_image(get_full_path(image_select.value))
     return {
         #'pix_x': np.arange(image.shape[2]),
         #'pix_y': np.arange(image.shape[1]),
@@ -720,14 +667,16 @@ def create_coords_dict(path: str) -> dict:
 
 
 def save():
+    print('save function called')
     session = connect_to_db(get_db_path(), False)
     add_image_to_db(session)
 
 
 def add_image_to_db(session):
-    #this function is called after an image and its rois are choosen
-    #we add each roi as a line to the db
+    #this function is called when user presses 'save'
+    #we add each roi in the image as a line to the db
     n_rois_current = len(roi_source.data['x'])
+    print('add_image_to_db func, n_rois_current=',n_rois_current)
     image_full_path = get_full_path(image_select.value)
     handle_rois_added_by_user(n_rois_current, session, image_full_path)
     handle_rois_deleted_by_user(session, n_rois_current, image_full_path)
@@ -735,10 +684,11 @@ def add_image_to_db(session):
 
 def handle_rois_added_by_user(n_rois_current: int, session, image_full_path: str):
     """"
-    go over list of rois per image recieved from user
+    go over list of rois per image received from user
     check for every roi if exists in DB
     add only non existing rois to db
     """
+    print('handle_rois_added_by_user')
     for roi_index in range(n_rois_current):
         roi_exist = check_col_image_exist_in_db(get_db_path(), image_full_path, 'roi_coordinates', get_roi_params(roi_index), 'float')
         if not roi_exist:
@@ -746,9 +696,15 @@ def handle_rois_added_by_user(n_rois_current: int, session, image_full_path: str
 
 
 def handle_rois_deleted_by_user(session, n_rois_current: int, image_full_path: str):
+    """
     #go over list of rois in DB, check for each roi if exists
     #if roi exists in db but not in image_source then delete it from the db
-    roi_db_list = get_column_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
+    :param session:
+    :param n_rois_current:
+    :param image_full_path:
+    :return:
+    """
+    roi_db_list = get_all_field_in_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
     for roi_db in roi_db_list:
         roi_db_parsed = np.frombuffer(roi_db, dtype=np.float)
         delete_roi_from_db = True
@@ -799,12 +755,14 @@ main_layout = row(
         row(beam_waist_xy_input, beam_waist_z_input),
         row(rbc_radius_input, tau_input),
         results_plot,
-        row(min_distance_input, max_distance_input, distance_step_input),
+        row(min_distance_input, max_distance_input),
+        row(distance_step_input, distance_step_limit_input),
         cross_correlation_plot,
         analysis_status_paragraph,
-        run_roi_button,
+        #run_roi_button,
     ),
     name='main_layout',
 )
 
-curdoc().add_root(main_layout)
+doc = curdoc()
+doc.add_root(main_layout)
