@@ -25,11 +25,34 @@ def get_file_paths(base_dir_input: str = BASE_DIR, ext: str = IMAGE_EXT) -> list
 
 
 #backend:
+def get_roi_coordinates(roi_raw: np.array) -> tuple:
+    """
+    gets roi as array of: [x,y,width,height]
+    returns roi as array of: [x_start, x_end, y_start, y_end]
+    :param roi_raw: roi array
+    :type roi_raw: str
+    :return:
+    """
+    width = round(roi_raw[2])
+    height = round(roi_raw[3])
+    x_center = round(roi_raw[0])
+    y_center = round(roi_raw[1])
+    x_start = int(x_center - width // 2)
+    x_end = int(x_center + width // 2)
+    x_start, x_end = sorted([x_start, x_end])
+    y_start = int(y_center - height // 2)
+    y_end = int(y_center + height // 2)
+    y_start, y_end = sorted([y_start, y_end])
+    return x_start, x_end, y_start, y_end
 
-def crop_img(roi_coordinates : np.array, frame : int, img_path: str) -> np.ndarray:
-    roi_parsed = np.frombuffer(roi_coordinates, dtype=np.float)
-    x_start, x_end, y_start, y_end = int(roi_parsed[0]), int(roi_parsed[1]), int(roi_parsed[2]), int(roi_parsed[3]) #todo: make pretty
-    return get_current_image(img_path)[frame, y_start:y_end, x_start:x_end]
+
+def crop_img(roi_coordinates: np.array, frame: int, img_path: str) -> np.ndarray:
+    if roi_coordinates is None:
+        return get_current_image(img_path)[frame, :, :]
+    else:
+        roi_parsed = np.frombuffer(roi_coordinates, dtype=np.float)
+        x_start, x_end, y_start, y_end = get_roi_coordinates(roi_parsed)
+        return get_current_image(img_path)[frame, y_start:y_end, x_start:x_end]
 
 
 def get_current_image(img_path: str) -> np.ndarray:

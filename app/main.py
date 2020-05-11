@@ -1,6 +1,7 @@
 import math
 import os
 import pathlib
+from file_handling import get_roi_coordinates
 from functools import partial
 from schema import *
 from file_handling import *
@@ -22,7 +23,7 @@ from app.figures.results_plot import (
     create_cross_correlation_plot,
 )
 
-base_dir_input = TextInput(value=r'd:\git\latest\flics\flics_data\\', title='Base Directory')
+base_dir_input = TextInput(value=r'd:\git\flics\flics_data\\', title='Base Directory')
 
 config = {
     'null': '0',
@@ -41,7 +42,6 @@ config = {
 def update_base_dir_select(attr, old, new: str):
     """
     called when user changes basedir
-
     adds the image's file path to a bokeh
 
     :param attr: part of function signature , not used
@@ -324,7 +324,7 @@ def get_roi_vector(roi_index: int):
     n_vectors = len(vector_source.data['xs'])
     for vector_index in range(n_vectors):
         x0, x1, y0, y1 = get_vector_params(vector_index)
-        x_start, x_end, y_start, y_end = get_roi_coordinates(roi_index)
+        x_start, x_end, y_start, y_end = get_roi_coordinates(get_roi_params(roi_index))
         if not any([x0 < x_start, x1 > x_end, y0 < y_start, y1 > y_end]):
             return vector_index
 
@@ -354,22 +354,8 @@ def change_selected_roi(attr: str, old: str, new: str):
 roi_source.selected.on_change('indices', change_selected_roi)
 
 
-def get_roi_coordinates(roi_index: int):
-    width = round(roi_source.data['width'][roi_index])
-    height = round(roi_source.data['height'][roi_index])
-    x_center = round(roi_source.data['x'][roi_index])
-    y_center = round(roi_source.data['y'][roi_index])
-    x_start = int(x_center - width // 2)
-    x_end = int(x_center + width // 2)
-    x_start, x_end = sorted([x_start, x_end])
-    y_start = int(y_center - height // 2)
-    y_end = int(y_center + height // 2)
-    y_start, y_end = sorted([y_start, y_end])
-    return x_start, x_end, y_start, y_end
-
-
 def get_roi_data(roi_index: int, frame: int):
-    x_start, x_end, y_start, y_end = get_roi_coordinates(roi_index)
+    x_start, x_end, y_start, y_end = get_roi_coordinates(get_roi_params(roi_index))
     return get_current_image(get_full_path(image_select.value))[frame, y_start:y_end, x_start:x_end]
 
 
@@ -651,8 +637,12 @@ def create_data_dict(roi_index: int) -> dict:
         'vessel_diameters': np.zeros(50), #np.array([[404040, 32323], [30232, 23232]]),
         'corr_calc_state': 0,
         'fitting_state': 1, #1= ready for backend processing . 2= processing. 3= processing done. 0 = processing error
-        'roi_coordinates': get_roi_coordinates(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
+        'roi_coordinates': get_roi_params(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
         'vector_loc': get_vector_params(roi_index), #['x_start', 'x_end', 'y_start', 'y_end']
+        'beam_waist_xy': beam_waist_xy_input.value,
+        'beam_waist_z': beam_waist_z_input.value,
+        'rbc_radius': rbc_radius_input.value,
+        'pixel_dwell_time': tau_input.value,
     }
 
 

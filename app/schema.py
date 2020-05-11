@@ -33,6 +33,10 @@ class Data(Base):
     fitting_state = Column(Integer)
     roi_coordinates = Column(BLOB)
     vector_loc = Column(BLOB)
+    beam_waist_xy= Column(Float)
+    beam_waist_z = Column(Float)
+    rbc_radius = Column(Float)
+    pixel_dwell_time= Column(Float)
 
 
 class CorrelationAnalysisConfiguration(Base):

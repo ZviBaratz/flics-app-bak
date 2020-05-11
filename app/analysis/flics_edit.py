@@ -3,6 +3,7 @@ import scipy
 import scipy.fftpack
 import numpy as np
 from app.analysis.global_fit import *
+from file_handling import *
 import time
 
 
@@ -10,6 +11,8 @@ class Analysis(object):
     def __init__(self,
                  image: np.ndarray = None,
                  image_path: str = None,
+                 frame_number : int = None,
+                 roi_coordinates : np.array= None,
                  threshold: float = None,
                  min_distance: int = 0,
                  max_distance: int = 320,
@@ -38,6 +41,13 @@ class Analysis(object):
         :param autorun: Run analysis on instantiation, defaults to True.
         :param autorun: bool, optional
         """
+        self.frame_number = frame_number
+        self.roi_coordinates = roi_coordinates
+        self.threshold = threshold
+        self.min_distance = min_distance
+        self.max_distance = max_distance
+        self.columnstep = columnstep
+        self.columnlimit = columnlimit
 
         # Set class parameters
         if not isinstance(image, np.ndarray) and not image_path:
@@ -45,14 +55,10 @@ class Analysis(object):
                 'An instance of the FLICS analysis must be initialized with an image\'s data or path.'
             )
         elif not isinstance(image, np.ndarray) and image_path:
-            self.image = self.load_image(image_path)
+            #self.image = self.load_image(image_path)
+            self.image = crop_img(roi_coordinates, frame_number, image_path)
         else:
             self.image = image
-        self.threshold = threshold
-        self.min_distance = min_distance
-        self.max_distance = max_distance
-        self.columnstep = columnstep
-        self.columnlimit = columnlimit
 
         # Create a range of the distances to be calculated
         self.distances = range(self.min_distance, self.max_distance,
@@ -71,7 +77,9 @@ class Analysis(object):
         :rtype: PIL.TiffImagePlugin.TiffImageFile
         """
         try:
-            return PIL.Image.open(path)
+            image = PIL.Image.open(path)
+            x =1
+            return image.crop(self.roi_coordinates)
         except (FileNotFoundError, OSError) as e:
             raise FileNotFoundError(f'Failed to load image file from {path}')
 
@@ -170,12 +178,14 @@ def xcorr_globalfit():
     return global_fit_res
 
 #xcorr_globalfit()
-"""
+
 if __name__ == '__main__':
-    analysis = Analysis(None, r'd:\git\flics\flics_data\Angoli_vena_conventional_Series012t5_6gradi.tif', None, 0, 320, 20, 50, True)
+#    analysis = Analysis(None, r'd:\git\flics\flics_data\198_WFA-FITC_RGECO_X25_mag5_910nm_1024px_Plane2_20190916_00001.tif',0, (668, 948, 956, 778), None, 0, 320, 20, 50, True)
+    analysis = Analysis(None, r'd:\git\flics\flics_data\fov5__NO_FLOW_WITH_CALCIUM_mag_6_512px_30Hz_1min_OFF_1min_ON_1min_OFF_NO_STIM_00001.tif #1.tif',
+                        0, np.array([668, 948, 956, 778]), None, 0, 320, 20, 50, True)
     analysis.check_results()
     #print(analysis.results)
-"""
+
 """
 flics_analysis = Analysis(None, r'd:\git\flics\flics_data\Angoli_vena_conventional_Series012t5_6gradi.tif', None, 0, 320, 20, 50, True)
 for key in flics_analysis.results:
