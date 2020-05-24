@@ -1,6 +1,7 @@
 import tifffile
 import numpy as np
 import os
+import numpy as np
 
 IMAGE_EXT = '.tif'
 BASE_DIR = r'd:\git\latest\flics\flics_data'
@@ -30,7 +31,7 @@ def get_roi_coordinates(roi_raw: np.array) -> tuple:
     gets roi as array of: [x,y,width,height]
     returns roi as array of: [x_start, x_end, y_start, y_end]
     :param roi_raw: roi array
-    :type roi_raw: str
+    :type roi_raw: np.array
     :return:
     """
     width = round(roi_raw[2])
@@ -46,19 +47,18 @@ def get_roi_coordinates(roi_raw: np.array) -> tuple:
     return x_start, x_end, y_start, y_end
 
 
-def crop_img(roi_coordinates: np.array, frame: int, img_path: str) -> np.ndarray:
+def crop_img(roi_coordinates: np.array, frame: int, img_path: str, data_channel: int,
+                 num_of_data_channels : int) -> np.ndarray:
     if roi_coordinates is None:
-        return get_current_image(img_path)[frame, :, :]
+        return get_current_image(img_path, int(data_channel), int(num_of_data_channels))[frame, :, :]
     else:
         roi_parsed = np.frombuffer(roi_coordinates, dtype=np.float)
         x_start, x_end, y_start, y_end = get_roi_coordinates(roi_parsed)
-        return get_current_image(img_path)[frame, y_start:y_end, x_start:x_end]
+        return get_current_image(img_path, int(data_channel), int(num_of_data_channels))[frame, y_start:y_end, x_start:x_end]
 
 
-def get_current_image(img_path: str) -> np.ndarray:
-    img = [read_image_file(img_path)][0]
-    print('get_current_image(), img =  ',img)
-    print('path = ', img_path, 'img.ndim=', img.ndim)
+def get_current_image(img_path: str, data_channel: int, num_of_channels: int) -> np.ndarray:
+    img = [read_image_file(img_path, data_channel, num_of_channels)][0] #array of frames
     if img.ndim == 2:
         return img[np.newaxis, :]
     elif img.ndim == 3:
@@ -67,10 +67,11 @@ def get_current_image(img_path: str) -> np.ndarray:
         raise ValueError(f"Image dimension mismatch. Number of dimensions: {img.ndim}")
 
 
-def read_image_file(img_path: str) -> np.ndarray:
+def read_image_file(img_path: str, data_channel : int, num_of_channels : int) -> np.ndarray:
+    print('read_image_file function. data_channel =', data_channel, 'num_of_channels=', num_of_channels)
     with tifffile.TiffFile(img_path, movie=True) as f:
         try:
-            data = f.asarray(slice(1, None, 2))  # read the second channel only
+            data = f.asarray(slice(data_channel, None, num_of_channels))
         except ValueError:
             data = f.asarray()
         return data
@@ -79,3 +80,8 @@ def read_image_file(img_path: str) -> np.ndarray:
 def read_metadata(img_path: str) -> dict:
     with tifffile.TiffFile(img_path, movie=True) as f:
         return f.scanimage_metadata
+
+
+
+
+#get_current_image(r'd:\git\flics\flics_data\fov5__NO_FLOW_WITH_CALCIUM_mag_6_512px_30Hz_1min_OFF_1min_ON_1min_OFF_NO_STIM_00001.tif', 0, 4)

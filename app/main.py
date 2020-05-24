@@ -1,6 +1,7 @@
 import math
 import os
 import pathlib
+import time
 from file_handling import get_roi_coordinates
 from functools import partial
 from schema import *
@@ -15,10 +16,11 @@ from bokeh.models.widgets import (
     Slider,
     TextInput,
     Toggle,
+    Dropdown,
 )
 from bokeh.palettes import Category20_20
-from app.figures.image_plot import create_image_figure
-from app.figures.results_plot import (
+from figures.image_plot import create_image_figure
+from figures.results_plot import (
     create_results_plot,
     create_cross_correlation_plot,
 )
@@ -82,6 +84,23 @@ image_select = Select(
     title='Image', value=config['null'], options=[config['null']])
 
 
+menu = ["1", "2", "3", "4"]
+data_channel = Select(title="Data channel:", value="1", options=menu)
+num_of_channels = Select(title="Number of Data Channels:", value="1", options=menu)
+
+
+def update_data_channel(attr, old, new):
+    data_channel.value = new
+
+def update_num_of_channels(attr, old, new):
+    num_of_channels.value = new
+
+data_channel.on_change('value', update_data_channel)
+num_of_channels.on_change('value', update_num_of_channels)
+
+show_image_button = Button(label='Show Image', button_type="success")
+
+
 def get_full_path(relative_path: str) -> str:
     """
 
@@ -111,7 +130,7 @@ def get_current_metadata() -> dict:
 
 
 def update_time_slider() -> None:
-    image = get_current_image(get_full_path(image_select.value))
+    image = get_current_image(get_full_path(image_select.value), int(data_channel.value) -1, int(num_of_channels.value))
     if len(image.shape) is 3:
         time_slider.end = image.shape[0] - 1
         time_slider.disabled = False
@@ -122,7 +141,7 @@ def update_time_slider() -> None:
 
 
 def get_current_frame() -> np.ndarray:
-    image = get_current_image(get_full_path(image_select.value))
+    image = get_current_image(get_full_path(image_select.value), int(data_channel.value) -1, int(num_of_channels.value))
     if len(image.shape) is 3:
         return image[time_slider.value, :, :]
     return image
@@ -137,6 +156,7 @@ def update_plot() -> None:
     frame = get_current_frame()
     width, height = frame.shape[1], frame.shape[0]
     image_source.data = dict(image=[frame], dw=[width], dh=[height])
+    #print('update_plot func. frame is:', frame, 'image_source.data = ', image_source.data) # ,'image_source.data[height]=', image_source.data[height])
     update_plot_axes(width, height)
     db_path = get_db_path()
     if os.path.isfile(db_path):
@@ -149,7 +169,7 @@ def update_plot() -> None:
 
 def draw_existing_rois() -> None:
     image_full_path = get_full_path(image_select.value)
-    print('image_full_path is:', image_full_path)
+    print('draw_existing_roi func . image_full_path is:', image_full_path)
     roi_data = get_all_field_in_image_db(get_db_path(), image_full_path, 'roi_coordinates', 'float')
     x = []
     y = []
@@ -177,6 +197,7 @@ def draw_existing_vectors() -> None:
 def get_frame_rate() -> float:
     meta = get_current_metadata()
     if meta:
+        print('get_frame_rate func for x_pixel_to_micron. meta!=none')
         return meta['FrameData']['SI.hRoiManager.scanFrameRate']
 
 
@@ -213,6 +234,7 @@ def get_zoom_factor() -> float:
 
 
 def calc_x_pixel_to_micron() -> float:
+    print('calc_x_pixel_to_micron, get_num_cols=', get_number_of_columns(), 'get_fov=', get_fov(), 'get_zoom_factor=', get_zoom_factor())
     try:
         return get_number_of_columns() / (get_fov() * get_zoom_factor())
     except TypeError:
@@ -227,6 +249,7 @@ def calc_y_pixel_to_micron() -> float:
 
 
 def get_image_shape() -> str:
+    print('get_image_shape func, get_num_of_rows=', get_number_of_rows(), 'get_num_of_cols=', get_number_of_columns())
     return f'{get_number_of_rows()}x{get_number_of_columns()}'
 
 
@@ -259,12 +282,17 @@ def update_parameter_widgets() -> None:
     y_pixel_to_micron_input.value = get_string('y_pixel_to_micron')
 
 
-def select_image(attr, old, new): # read from db prev data and metadata of image if exists
+def show_image(): # read from folder prev data and metadata of image if exists
+    print('show image func, (data_channel.value)-1=', data_channel.value)# 'num_of_channels.value=', int(num_of_channels.value))
     message_paragraph.style = {'color': 'orange'}
     message_paragraph.text = 'Loading...'
-    path = get_full_path(new)
+    path = get_full_path(image_select.value)
+    if not data_channel.value and num_of_channels.value:
+        message_paragraph.text = 'Please select data channel and number of channels'
+        time.sleep(5)
+        return
     raw_source.data = {
-        'image': [read_image_file(path)],
+        'image': [read_image_file(path, int(data_channel.value) - 1, int(num_of_channels.value))],
         'meta': [read_metadata(path)]
     }
     update_time_slider()
@@ -275,13 +303,13 @@ def select_image(attr, old, new): # read from db prev data and metadata of image
     message_paragraph.text = 'Image successfully loaded!'
 
 
-image_select.on_change('value', select_image)
-
+#image_select.on_change('value', select_image)
+show_image_button.on_click(show_image)
 time_slider = Slider(start=0, end=1, value=0, step=1, title='Time')
 
 
 def update_frame(attr, old, new):
-    image = get_current_image(get_full_path(image_select.value))
+    image = get_current_image(get_full_path(image_select.value), int(data_channel.value) - 1, int(num_of_channels.value))
     if len(image.shape) is 3:
         try:
             image_source.data['image'] = [image[new, :, :]]
@@ -290,7 +318,7 @@ def update_frame(attr, old, new):
 
 
 def calculate_2d_projection() -> np.ndarray:
-    image = get_current_image(get_full_path(image_select.value))
+    image = get_current_image(get_full_path(image_select.value), int(data_channel.value) - 1, int(num_of_channels.value))
     if len(image.shape) is 3:
         return np.max(image, axis=0)
 
@@ -356,7 +384,7 @@ roi_source.selected.on_change('indices', change_selected_roi)
 
 def get_roi_data(roi_index: int, frame: int):
     x_start, x_end, y_start, y_end = get_roi_coordinates(get_roi_params(roi_index))
-    return get_current_image(get_full_path(image_select.value))[frame, y_start:y_end, x_start:x_end]
+    return get_current_image(get_full_path(image_select.value), int(data_channel.value) - 1, int(num_of_channels.value))[frame, y_start:y_end, x_start:x_end]
 
 
 vector_source = ColumnDataSource(data={
@@ -615,9 +643,13 @@ def get_vector_angle_input(index: int) -> float:
 
 
 def create_data_dict(roi_index: int) -> dict:
+    print('create_data_dict, data_channel =' ,(int(data_channel.value) -1),
+        'num_of_data_channels=', int(num_of_channels.value))
     return {
         'path': get_full_path(image_select.value),
         'frame_rate': float(frame_rate_input.value),
+        'data_channel' : (int(data_channel.value) -1),
+        'num_of_data_channels' : int(num_of_channels.value),
         'line_rate': float(line_rate_input.value),
         'x_pixel_to_micron': float(calc_x_pixel_to_micron()),
         'y_pixel_to_micron': float(calc_y_pixel_to_micron()),
@@ -647,7 +679,7 @@ def create_data_dict(roi_index: int) -> dict:
 
 
 def create_coords_dict(path: str) -> dict:
-    image = get_current_image(get_full_path(image_select.value))
+    image = get_current_image(get_full_path(image_select.value), int(data_channel.value) -1, int(num_of_channels.value))
     return {
         #'pix_x': np.arange(image.shape[2]),
         #'pix_y': np.arange(image.shape[1]),
@@ -725,6 +757,9 @@ main_layout = row(
     widgetbox(
         base_dir_input,
         image_select,
+        data_channel,
+        num_of_channels,
+        show_image_button,
         message_paragraph,
         time_slider,
         image_shape_input,

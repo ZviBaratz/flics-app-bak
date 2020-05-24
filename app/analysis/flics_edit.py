@@ -9,6 +9,8 @@ import time
 
 class Analysis(object):
     def __init__(self,
+                 data_channel: int,
+                 num_of_data_channels : int,
                  image: np.ndarray = None,
                  image_path: str = None,
                  frame_number : int = None,
@@ -27,7 +29,8 @@ class Analysis(object):
         :type image: np.ndarray
         :param image_path: .tif image file path.
         :type image_path: str
-        :param threshold: Threshold to be applied to the image, defaults to None.
+        :param threshold: The threshold is to highlight the fluorescent diagonal lines with respect to black stripes (the intensity value of a pixel is put to zero every time it is below the chosen threshold)
+
         :param threshold: float, optional
         :param max_distance: Maximum column-pair distance to be calculated,
         defaults to 320. should be equal to (or less than) half of the y dimension (in pixels) of the image
@@ -55,8 +58,7 @@ class Analysis(object):
                 'An instance of the FLICS analysis must be initialized with an image\'s data or path.'
             )
         elif not isinstance(image, np.ndarray) and image_path:
-            #self.image = self.load_image(image_path)
-            self.image = crop_img(roi_coordinates, frame_number, image_path)
+            self.image = crop_img(None, frame_number, image_path, data_channel, num_of_data_channels)
         else:
             self.image = image
 
@@ -65,25 +67,9 @@ class Analysis(object):
                                self.columnstep)
         if autorun:
             self.results = self.main_ccf()
+            self.check_results()
 
-    def load_image(self, path: str):
-        """
-        Returns the loaded image data.
-
-        :param path: .tif image file path.
-        :type path: str
-        :raises FileNotFoundError: Failed to read image from file.
-        :return: Loaded image data.
-        :rtype: PIL.TiffImagePlugin.TiffImageFile
-        """
-        try:
-            image = PIL.Image.open(path)
-            x =1
-            return image.crop(self.roi_coordinates)
-        except (FileNotFoundError, OSError) as e:
-            raise FileNotFoundError(f'Failed to load image file from {path}')
-
-    def correlation(self, t1,m1,t2,m2,y):
+    def correlation(self, t1, m1, t2, m2, y):
         fft1 = scipy.fftpack.fft([(t1[i])-m1 for i in range(y)])
         fft2 = scipy.fftpack.fft([(t2[i])-m2 for i in range(y)])
         fft1 = np.ma.conjugate(fft1)
@@ -93,52 +79,40 @@ class Analysis(object):
     def main_ccf(self):
         """
         Returns the analysis results for all distances.
-
         :return: A dictionary of mean column-pair cross-correlations by
         distance.
         :rtype: dict
         """
         print("main ccf called")
-        x = self.image.size[0]
-        y = self.image.size[1]
-        data = [[0 for i in range(y)]for j in range(x)]
-        a = list(self.image.getdata())
-        #storage of the .tif file as an image matrix
-        for i in range(y):
-            for j in range(x):
-                data[j][i] = float(a[i*x+j])
+        x = self.image.shape[0]
+        y = self.image.shape[1]
+
         #data thresholding (if needed)
-        if self.threshold is not None:
-            for i in range(y):
-                for j in range(x):
-                    if data[j][i] < self.threshold:
-                        data[j][i] = 0.0
-        #computation of the average value for each image column +
+        if self.threshold:
+            self.image[self.image < self.threshold] = 0.0
+        self.image = self.image.T
+
+        #computation of the average value for each image column
+        mean = np.mean(self.image, axis=1)
+
         #computation of the cross-correlation function
-        mean = [0.0 for i in range(x)]
-        for i in range(x):
-            for j in range(y):
-                mean[i] = mean[i] + data[i][j]/y
         # the distance between the columns to cross-correlate varies
         # from 0 to max_distance, with step equal to columnstep
         ccf_results = {}
         for i in self.distances:
-            print(i)
             output = [0 for k in range(y)]
             #For each distance, ALL the pairs of columns at that distance are exploited.
             #The average cross-correlation function is provided (convenient for statistical reasons)
-            for j in range(x-(i)):
-                corr = self.correlation(data[j+i], mean[j+i], data[j], mean[j],y)
+            for j in range(x-i):
+                corr = self.correlation(self.image[j+i], mean[j+i], self.image[j], mean[j], y)
+
                 output = [output[l]+corr[l]/(x-i) for l in range(y)]
 
-            #only for lefttoright option
-            key = i
-            res = []
+            res =[]
             res.append(output[0])
-
             for k in range(self.columnlimit):
-                res.append(output[y-k-1])
-            ccf_results[key] = res
+                res.append(output[y-k-1])   #only for lefttoright option
+            ccf_results[i] = res
         return ccf_results
 
     def check_results(self):
@@ -176,25 +150,3 @@ def xcorr_globalfit():
     print('elapsed time globalfit func =', elap_time_globalfit)
 
     return global_fit_res
-
-#xcorr_globalfit()
-
-if __name__ == '__main__':
-#    analysis = Analysis(None, r'd:\git\flics\flics_data\198_WFA-FITC_RGECO_X25_mag5_910nm_1024px_Plane2_20190916_00001.tif',0, (668, 948, 956, 778), None, 0, 320, 20, 50, True)
-    analysis = Analysis(None, r'd:\git\flics\flics_data\fov5__NO_FLOW_WITH_CALCIUM_mag_6_512px_30Hz_1min_OFF_1min_ON_1min_OFF_NO_STIM_00001.tif #1.tif',
-                        0, np.array([668, 948, 956, 778]), None, 0, 320, 20, 50, True)
-    analysis.check_results()
-    #print(analysis.results)
-
-"""
-flics_analysis = Analysis(None, r'd:\git\flics\flics_data\Angoli_vena_conventional_Series012t5_6gradi.tif', None, 0, 320, 20, 50, True)
-for key in flics_analysis.results:
-    print(flics_analysis.results[key])
-df = pd.DataFrame(flics_analysis.results)
-df.plot()
-#check_results(results)
-
-global_fit = GlobalFit(results)
-global_fit_res = global_fit.run()
-print(global_fit_res)
-"""

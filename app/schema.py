@@ -11,6 +11,8 @@ class Data(Base):
     __tablename__ = 'data'
     id = Column(Integer, primary_key=True)
     path = Column(String)
+    data_channel = Column(Integer)
+    num_of_data_channels = Column(Integer)
     frame_rate = Column(Float)
     line_rate = Column(Float)
     x_pixel_to_micron = Column(Float)
@@ -171,3 +173,5 @@ if __name__ == '__main__':
     get_field_in_roi_image_db(db_path, image_full_path, roi, 'fitting_state', 'int')
 
 """
+
+#connect_to_db(r'd:\git\flics\flics_data\db.db', True)

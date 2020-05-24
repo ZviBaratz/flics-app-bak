@@ -3,6 +3,7 @@ from file_handling import *
 from schema import *
 from app.analysis.flics_edit import *
 
+
 db_path = r'd:\git\flics\flics_data\db.db'
 
 
@@ -15,10 +16,20 @@ class Backend(object):
         if autorun:
             self.results = self.main_server()
 
-    def xcorr_global_fit_on_frame(self, data_to_xcor) -> dict:
+    def xcorr_global_fit_on_frame(self, data_to_xcor: dict) -> dict:
+        """
+        recieves a dict fer frame per roi and runs cross-correlation and global fit
+        returns blood flow velocity in that given frame
+
+        :param data_to_xcor: data regarding a single frame in an roi
+        :type data_to_xcor : dict
+        :return: a dict; the key is the frame number and the value is the blood flow velocity in that frame
+        """
         print('running xcorr_global_fit_on_frame', data_to_xcor['frame'])
-        flics_analysis = Analysis(None, data_to_xcor['meta_data'].path, data_to_xcor['frame'],
-                                data_to_xcor['meta_data'].roi_coordinates, None, data_to_xcor['meta_data'].min_distance,
+        flics_analysis = Analysis(data_to_xcor['meta_data'].data_channel, data_to_xcor['meta_data'].num_of_data_channels,
+                                  None, data_to_xcor['meta_data'].path,
+                                  data_to_xcor['frame'], data_to_xcor['meta_data'].roi_coordinates, None,
+                                  data_to_xcor['meta_data'].min_distance,
                                   data_to_xcor['meta_data'].max_distance, data_to_xcor['meta_data'].distance_step,
                                   data_to_xcor['meta_data'].distance_step_limit, True)
         global_fitting = GlobalFit(flics_analysis.results, data_to_xcor['meta_data'].vector_angle,
@@ -32,7 +43,7 @@ class Backend(object):
     def prepare_data_to_xcor(self) -> list:
         """
         reads single row in the DB, each row is a roi to process
-        creates a dictionary per frame with all the data needed for processing
+        creates a dictionary per frame with all the data in that row
         returns a list of all dictionaries, all the frames of the chosen roi
 
         :return: list of dictionaries
@@ -56,10 +67,13 @@ class Backend(object):
                     fitting_results.append(frame_res)
                     print(frame_res)
             add_res_to_db()
+       # remove_session()
+
 
     def main_server(self):
         while True:
             self.run_xcorr_global_fit()
 
 
-#Backend(db_path)
+
+Backend(db_path)
