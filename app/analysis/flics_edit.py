@@ -58,7 +58,7 @@ class Analysis(object):
                 'An instance of the FLICS analysis must be initialized with an image\'s data or path.'
             )
         elif not isinstance(image, np.ndarray) and image_path:
-            self.image = crop_img(None, frame_number, image_path, data_channel, num_of_data_channels)
+            self.image = crop_img(roi_coordinates, frame_number, image_path, data_channel, num_of_data_channels)
         else:
             self.image = image
 
@@ -67,7 +67,7 @@ class Analysis(object):
                                self.columnstep)
         if autorun:
             self.results = self.main_ccf()
-            self.check_results()
+            #self.check_results()
 
     def correlation(self, t1, m1, t2, m2, y):
         fft1 = scipy.fftpack.fft([(t1[i])-m1 for i in range(y)])
@@ -150,3 +150,6 @@ def xcorr_globalfit():
     print('elapsed time globalfit func =', elap_time_globalfit)
 
     return global_fit_res
+
+def run_xcor(db_path):
+    db_row = get_row_to_procc_from_db(db_path)

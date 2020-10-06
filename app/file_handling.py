@@ -58,9 +58,10 @@ def crop_img(roi_coordinates: np.array, frame: int, img_path: str, data_channel:
 
 
 def get_current_image(img_path: str, data_channel: int, num_of_channels: int) -> np.ndarray:
-    img = [read_image_file(img_path, data_channel, num_of_channels)][0] #array of frames
+    #used by the bakend (frontend can use raw_source or image_source)
+    img = [read_image_file(img_path, data_channel, num_of_channels)][0] #array of frames.
     if img.ndim == 2:
-        return img[np.newaxis, :]
+        return img[np.newaxis, :] #increase img dim to 3
     elif img.ndim == 3:
         return img
     else:
