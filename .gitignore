@@ -35,3 +35,7 @@ htmlcov
 
 # DB file
 **.nc
+
+# Virtual environment directories and files
+venv
+.venv
